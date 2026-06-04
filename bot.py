@@ -8,9 +8,9 @@ import requests
 from telebot import types
 from datetime import datetime, timedelta
 from threading import Lock, Thread
-from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread as FlaskThread
+from dotenv import load_dotenv
 
 # ================= CONFIG =================
 load_dotenv()
@@ -31,9 +31,31 @@ DAILY_BONUS = 0.25
 
 # ================= REKLAMA VA MOTIVATSIYA =================
 ADS_BOT = "@zurnavolarbot"
-ADS_MESSAGES = [f"🎵 {ADS_BOT} - Eng zo'r musiqa boti!", f"🔥 {ADS_BOT} - Sevimli qo'shiqlaringiz!", f"🎶 {ADS_BOT} - Musiqa dunyosi!", f"💃 {ADS_BOT} - Raqsga tushing!", f"🎧 {ADS_BOT} - Hit qo'shiqlar!"]
-MOTIVATIONS = ["🔥 Siz zo'rsiz! Davom eting!", "💪 Har bir taklif - yulduz sari qadam!", "⭐ Yulduzlar sizni kutmoqda!", "🚀 Oldinga, lider bo'ling!", "👑 Siz eng yaxshisisiz!", "🎯 Maqsad sari intiling!", "💎 Katta sovg'alar kutyapti!", "🌟 Yulduzlar soni oshmoqda!", "🏆 Chempion bo'ling!", "⚡ Kuch sizda!"]
-GIFT_ADS = [{"emoji": "❤️", "name": "Pushti Yurakcha", "desc": "Sevgi ramzi!", "photo": "https://i.imgur.com/8Yp9Z2M.jpg"}, {"emoji": "🧸", "name": "Ayiqcha", "desc": "Yoqimli sovg'a!", "photo": "https://i.imgur.com/5f2vL8K.jpg"}, {"emoji": "🌹", "name": "Atirgul", "desc": "Romantik!", "photo": "https://i.imgur.com/7zK9pQm.jpg"}, {"emoji": "🎁", "name": "Sovg'a qutisi", "desc": "Sirli sovg'a!", "photo": "https://i.imgur.com/3vX9pLm.jpg"}]
+ADS_MESSAGES = [
+    f"🎵 {ADS_BOT} - Eng zo'r musiqa boti!",
+    f"🔥 {ADS_BOT} - Sevimli qo'shiqlaringiz!",
+    f"🎶 {ADS_BOT} - Musiqa dunyosi!",
+    f"💃 {ADS_BOT} - Raqsga tushing!",
+    f"🎧 {ADS_BOT} - Hit qo'shiqlar!"
+]
+MOTIVATIONS = [
+    "🔥 Siz zo'rsiz! Davom eting!",
+    "💪 Har bir taklif - yulduz sari qadam!",
+    "⭐ Yulduzlar sizni kutmoqda!",
+    "🚀 Oldinga, lider bo'ling!",
+    "👑 Siz eng yaxshisisiz!",
+    "🎯 Maqsad sari intiling!",
+    "💎 Katta sovg'alar kutyapti!",
+    "🌟 Yulduzlar soni oshmoqda!",
+    "🏆 Chempion bo'ling!",
+    "⚡ Kuch sizda!"
+]
+GIFT_ADS = [
+    {"emoji": "❤️", "name": "Pushti Yurakcha", "desc": "Sevgi ramzi!", "photo": "https://i.imgur.com/8Yp9Z2M.jpg"},
+    {"emoji": "🧸", "name": "Ayiqcha", "desc": "Yoqimli sovg'a!", "photo": "https://i.imgur.com/5f2vL8K.jpg"},
+    {"emoji": "🌹", "name": "Atirgul", "desc": "Romantik!", "photo": "https://i.imgur.com/7zK9pQm.jpg"},
+    {"emoji": "🎁", "name": "Sovg'a qutisi", "desc": "Sirli sovg'a!", "photo": "https://i.imgur.com/3vX9pLm.jpg"},
+]
 
 # ================= BOT INIT =================
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
@@ -395,14 +417,11 @@ def check_sub(uid):
             else:
                 not_sub.append({"id": ch_id, "username": username, "name": name, "url": url})
         except Exception as e:
-            # Agar tekshirib bo'lmasa (bot admin emas yoki API xato), obuna bo'lmagan deb hisoblaymiz
             logger.error(f"Kanal tekshiruvi xatosi {ch_id}: {e}")
-            # Adminni ogohlantiramiz (faqat bir marta, har bir chaqiruvda emas? Buning uchun alohida mexanizm kerak, hozircha oddiy)
             try:
                 bot.send_message(ADMIN_ID, f"❌ Bot kanalda admin emas yoki get_chat_member ishlamayapti: {name} ({ch_id})\nIltimos, botni kanalga admin qiling!")
             except:
                 pass
-            # Xavfsizlik uchun obuna bo'lmagan deb hisoblaymiz (majburiy talab)
             not_sub.append({"id": ch_id, "username": username, "name": name, "url": url})
     return not_sub
 
@@ -586,7 +605,6 @@ def callback(call):
                     bot.answer_callback_query(call.id, f"❌ {name} kanaliga obuna bo'lmagansiz!", show_alert=True)
             except Exception as e:
                 logger.warning(f"Task tekshiruvi xatosi {ch_id}: {e}")
-                # Tekshirib bo'lmasa, obuna bo'lmagan deb hisoblaymiz
                 bot.answer_callback_query(call.id, f"❌ Kanalga obuna bo'lmagansiz yoki bot admin emas!", show_alert=True)
         return
     elif data == "back_to_menu":
@@ -728,8 +746,8 @@ def send_cmd(m):
     if m.from_user.id != ADMIN_ID: return
     try:
         parts = m.text.split(maxsplit=2)
-        uid, text = int(parts[1]), parts[2]
-        bot.send_message(uid, f"📩 ADMIN:\n\n{text}")
+        uid, text_msg = int(parts[1]), parts[2]
+        bot.send_message(uid, f"📩 ADMIN:\n\n{text_msg}")
         bot.reply_to(m, f"✅ {uid} ga yuborildi!")
     except:
         bot.reply_to(m, "❌ /send [id] [matn]")
@@ -759,7 +777,10 @@ def search_cmd(m):
         query = m.text.split(maxsplit=1)[1]
         results = db.search_user(query)
         if results:
-            text = "🔍 Natijalar:\n" + "\n".join(f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)}" for uid, un, nm, inv, st, vip, streak in results[:10])
+            text = "🔍 Natijalar:\n"
+            for uid, un, nm, inv, st, vip, streak in results[:10]:
+                user = f"@{un}" if un else nm
+                text += f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)}\n"
             bot.reply_to(m, text)
         else:
             bot.reply_to(m, "❌ Topilmadi!")
@@ -770,12 +791,12 @@ def search_cmd(m):
 def broadcast_cmd(m):
     if m.from_user.id != ADMIN_ID: return
     try:
-        text = m.text.split(maxsplit=1)[1]
+        broadcast_text = m.text.split(maxsplit=1)[1]
         users = db.get_all_users_for_ad()
         sent = 0
         for uid in users:
             try:
-                bot.send_message(uid, f"📢 E'LON\n\n{text}")
+                bot.send_message(uid, f"📢 E'LON\n\n{broadcast_text}")
                 sent += 1
                 time.sleep(0.1)
             except:
@@ -788,12 +809,17 @@ def broadcast_cmd(m):
 @bot.message_handler(commands=["stats"])
 def stats_cmd(m):
     u = db.get(m.from_user.id)
-    bot.reply_to(m, add_footer(f"📊 Sizning statistikangiz:\n👥 Takliflar: {u['invites']}\n⭐ Yulduzlar: {format_stars(u['stars'])}\n👑 VIP: {'HA' if u['vip'] else 'YO\'Q'}\n🔥 Streak: {u['streak']} kun"))
+    vip_status = "HA" if u["vip"] else "YO'Q"
+    text = f"📊 Sizning statistikangiz:\n👥 Takliflar: {u['invites']}\n⭐ Yulduzlar: {format_stars(u['stars'])}\n👑 VIP: {vip_status}\n🔥 Streak: {u['streak']} kun"
+    bot.reply_to(m, add_footer(text))
 
 @bot.message_handler(commands=["daily"])
 def daily_cmd(m):
     ok, ns, bonus, streak, extra = db.give_daily_bonus(m.from_user.id)
-    bot.reply_to(m, add_footer(f"🎁 +{bonus}⭐ | Jami: {format_stars(ns)}⭐ | 🔥 Streak: {streak}") if ok else "❌ Bugun kunlik bonusni olgansiz!")
+    if ok:
+        bot.reply_to(m, add_footer(f"🎁 +{bonus}⭐ | Jami: {format_stars(ns)}⭐ | 🔥 Streak: {streak}"))
+    else:
+        bot.reply_to(m, "❌ Bugun kunlik bonusni olgansiz!")
 
 @bot.message_handler(commands=["link"])
 def link_cmd(m):
@@ -816,7 +842,8 @@ def tasks_cmd(m):
 
 @bot.message_handler(commands=["help"])
 def help_cmd(m):
-    bot.reply_to(m, f"🤖 Yordam\n\n/start - Boshlash\n/stats - Statistika\n/daily - Kunlik bonus\n/link - Taklif linki\n/tasks - Vazifalar\n/help - Yordam\n\n📢 Guruh: {GROUP_LINK}\n🎁 4 ta taklif = 1⭐\n🎁 Kunlik bonus: +{DAILY_BONUS}⭐")
+    help_text = f"🤖 Yordam\n\n/start - Boshlash\n/stats - Statistika\n/daily - Kunlik bonus\n/link - Taklif linki\n/tasks - Vazifalar\n/help - Yordam\n\n📢 Guruh: {GROUP_LINK}\n🎁 4 ta taklif = 1⭐\n🎁 Kunlik bonus: +{DAILY_BONUS}⭐"
+    bot.reply_to(m, help_text)
 
 # ================= LEADERBOARD SCHEDULER =================
 def leaderboard_scheduler():
@@ -830,7 +857,8 @@ def leaderboard_scheduler():
                     for i, (u, n, inv, st, v, streak) in enumerate(top, 1):
                         user = f"@{u}" if u else n
                         medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
-                        text += f"{medal} <b>{user}</b> {'👑' if v else ''}\n👥{inv} ⭐{format_stars(st)} 🔥{streak}\n\n"
+                        vip_mark = "👑" if v else ""
+                        text += f"{medal} <b>{user}</b> {vip_mark}\n👥{inv} ⭐{format_stars(st)} 🔥{streak}\n\n"
                     text += f"\n🔥 4 ta taklif = 1⭐ | 🔗 @{BOT_USERNAME}"
                     for ch_id, username, name, url, _ in db.get_forced_channels():
                         try: bot.send_message(ch_id, text)
@@ -841,7 +869,12 @@ def leaderboard_scheduler():
                 if empty_count >= 60:
                     top = db.get_top(10)
                     if top:
-                        text = "🏆 TOP 10 (avtomatik)\n\n" + "\n".join(f"{'🥇' if i==1 else '🥈' if i==2 else '🥉' if i==3 else f'{i}️⃣'} <b>{'@'+u if u else n}</b> {'👑' if v else ''}\n👥{inv} ⭐{format_stars(st)}" for i, (u, n, inv, st, v, streak) in enumerate(top, 1)) + f"\n\n🔗 @{BOT_USERNAME}"
+                        text = "🏆 TOP 10 (avtomatik)\n\n"
+                        for i, (u, n, inv, st, v, streak) in enumerate(top, 1):
+                            user = f"@{u}" if u else n
+                            medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
+                            text += f"{medal} <b>{user}</b> {'👑' if v else ''}\n👥{inv} ⭐{format_stars(st)}\n\n"
+                        text += f"\n🔗 @{BOT_USERNAME}"
                         for ch_id, username, name, url, _ in db.get_forced_channels():
                             try: bot.send_message(ch_id, text)
                             except: pass
@@ -884,7 +917,7 @@ if __name__ == "__main__":
     # Flask serverini alohida threadda ishga tushirish
     FlaskThread(target=run_http, daemon=True).start()
     
-    # Webhook o‘chirish
+    # Webhook o'chirish
     try:
         requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
         time.sleep(1)
