@@ -5,11 +5,10 @@ import os
 import time
 import random
 import requests
+from flask import Flask
 from telebot import types
 from datetime import datetime, timedelta
 from threading import Lock, Thread
-from flask import Flask
-from threading import Thread as FlaskThread
 from dotenv import load_dotenv
 
 # ================= CONFIG =================
@@ -25,7 +24,7 @@ if not API_TOKEN:
     exit(1)
 
 # ================= SOZLAMALAR =================
-GROUP_ID = -1002449896845
+GROUP_ID = -1002449896845  # Guruh ID (takliflar uchun)
 GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
 DAILY_BONUS = 0.25
 
@@ -38,6 +37,7 @@ ADS_MESSAGES = [
     f"💃 {ADS_BOT} - Raqsga tushing!",
     f"🎧 {ADS_BOT} - Hit qo'shiqlar!"
 ]
+
 MOTIVATIONS = [
     "🔥 Siz zo'rsiz! Davom eting!",
     "💪 Har bir taklif - yulduz sari qadam!",
@@ -50,6 +50,7 @@ MOTIVATIONS = [
     "🏆 Chempion bo'ling!",
     "⚡ Kuch sizda!"
 ]
+
 GIFT_ADS = [
     {"emoji": "❤️", "name": "Pushti Yurakcha", "desc": "Sevgi ramzi!", "photo": "https://i.imgur.com/8Yp9Z2M.jpg"},
     {"emoji": "🧸", "name": "Ayiqcha", "desc": "Yoqimli sovg'a!", "photo": "https://i.imgur.com/5f2vL8K.jpg"},
@@ -61,17 +62,6 @@ GIFT_ADS = [
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
-
-# ================= FLASK SERVER (Render port uchun) =================
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "✅ Bot is running!"
-
-def run_http():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
 
 # ================= DATABASE =================
 lock = Lock()
@@ -100,6 +90,7 @@ class DB:
                 total_earned REAL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
             CREATE TABLE IF NOT EXISTS invite_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 inviter_id INTEGER,
@@ -108,6 +99,7 @@ class DB:
                 source TEXT DEFAULT 'group',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
             CREATE TABLE IF NOT EXISTS purchase_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -116,21 +108,18 @@ class DB:
                 price REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Majburiy kanallar (admin boshqaradi)
             CREATE TABLE IF NOT EXISTS forced_channels(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id INTEGER UNIQUE,
+                channel_id INTEGER,
                 channel_username TEXT,
                 channel_name TEXT,
                 channel_url TEXT,
-                max_users INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE TABLE IF NOT EXISTS forced_channel_users(
-                channel_id INTEGER,
-                user_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (channel_id, user_id)
-            );
+
+            -- Vazifalar (zadaniya) - kanalga obuna bo'lish
             CREATE TABLE IF NOT EXISTS tasks(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_id INTEGER,
@@ -140,6 +129,8 @@ class DB:
                 reward REAL DEFAULT 0.25,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Foydalanuvchining bajargan vazifalari
             CREATE TABLE IF NOT EXISTS user_tasks(
                 user_id INTEGER,
                 task_id INTEGER,
@@ -148,6 +139,18 @@ class DB:
             );
             """)
             self.conn.commit()
+
+            # Agar forced_channels bo'sh bo'lsa, default kanallarni qo'shish
+            self.cur.execute("SELECT COUNT(*) FROM forced_channels")
+            if self.cur.fetchone()[0] == 0:
+                default_channels = [
+                    (-1003737363661, "@Tekin_stars_yulduz", "📢 KANAL", "https://t.me/Tekin_stars_yulduz"),
+                    (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars")
+                ]
+                for ch_id, username, name, url in default_channels:
+                    self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
+                                     (ch_id, username, name, url))
+                self.conn.commit()
 
     def create_user(self, uid, username, name):
         with lock:
@@ -271,51 +274,84 @@ class DB:
             self.cur.execute("SELECT username, first_name, invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY invites DESC LIMIT ?", (limit,))
             return self.cur.fetchall()
 
+    def get_top_streak(self, limit=10):
+        with lock:
+            self.cur.execute("SELECT username, first_name, daily_streak, stars FROM users WHERE is_banned=0 AND daily_streak>0 ORDER BY daily_streak DESC LIMIT ?", (limit,))
+            return self.cur.fetchall()
+
+    def get_history(self, uid):
+        with lock:
+            self.cur.execute("SELECT invited_id, invited_name, source, created_at FROM invite_history WHERE inviter_id=? ORDER BY created_at DESC LIMIT 10", (uid,))
+            return self.cur.fetchall()
+
+    def get_purchase_history(self, uid):
+        with lock:
+            self.cur.execute("SELECT item_name, item_emoji, price, created_at FROM purchase_history WHERE user_id=? ORDER BY created_at DESC LIMIT 10", (uid,))
+            return self.cur.fetchall()
+
+    def check_ban(self, uid):
+        with lock:
+            self.cur.execute("SELECT is_banned FROM users WHERE user_id=?", (uid,))
+            row = self.cur.fetchone()
+            return row and row[0] == 1
+
+    def ban_user(self, uid):
+        with lock:
+            self.cur.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (uid,))
+            self.conn.commit()
+
+    def unban_user(self, uid):
+        with lock:
+            self.cur.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (uid,))
+            self.conn.commit()
+
+    def search_user(self, query):
+        with lock:
+            self.cur.execute("SELECT user_id, username, first_name, invites, stars, vip, daily_streak FROM users WHERE user_id=? OR username LIKE ? OR first_name LIKE ?", (query, f"%{query}%", f"%{query}%"))
+            return self.cur.fetchall()
+
+    def get_stats(self):
+        with lock:
+            s = {}
+            self.cur.execute("SELECT COUNT(*) FROM users")
+            s["users"] = self.cur.fetchone()[0]
+            self.cur.execute("SELECT SUM(invites) FROM users")
+            s["invites"] = self.cur.fetchone()[0] or 0
+            self.cur.execute("SELECT SUM(stars) FROM users")
+            s["stars"] = float(self.cur.fetchone()[0] or 0)
+            self.cur.execute("SELECT COUNT(*) FROM users WHERE vip=1")
+            s["vip"] = self.cur.fetchone()[0]
+            self.cur.execute("SELECT SUM(total_spent) FROM users")
+            s["spent"] = float(self.cur.fetchone()[0] or 0)
+            self.cur.execute("SELECT COUNT(*) FROM invite_history")
+            s["total_invites"] = self.cur.fetchone()[0]
+            self.cur.execute("SELECT COUNT(*) FROM purchase_history")
+            s["purchases"] = self.cur.fetchone()[0]
+            return s
+
     def get_all_users_for_ad(self):
         with lock:
             self.cur.execute("SELECT user_id FROM users WHERE is_banned=0")
             return [row[0] for row in self.cur.fetchall()]
 
-    # Majburiy kanallar
-    def add_forced_channel(self, channel_id, username, name, url, max_users=0):
-        with lock:
-            self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url, max_users) VALUES(?,?,?,?,?)", 
-                             (channel_id, username, name, url, max_users))
-            self.conn.commit()
-
+    # ============= Majburiy kanallar =============
     def get_forced_channels(self):
         with lock:
-            self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url, max_users FROM forced_channels")
+            self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url FROM forced_channels")
             return self.cur.fetchall()
+
+    def add_forced_channel(self, channel_id, username, name, url):
+        with lock:
+            self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
+                             (channel_id, username, name, url))
+            self.conn.commit()
 
     def remove_forced_channel(self, channel_id):
         with lock:
             self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
             self.conn.commit()
 
-    def record_channel_user(self, channel_id, user_id):
-        with lock:
-            self.cur.execute("INSERT OR IGNORE INTO forced_channel_users(channel_id, user_id) VALUES(?,?)", (channel_id, user_id))
-            if self.cur.rowcount > 0:
-                self.cur.execute("SELECT COUNT(*) FROM forced_channel_users WHERE channel_id=?", (channel_id,))
-                count = self.cur.fetchone()[0]
-                self.cur.execute("SELECT max_users FROM forced_channels WHERE channel_id=?", (channel_id,))
-                row = self.cur.fetchone()
-                if row and row[0] > 0 and count >= row[0]:
-                    self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
-                    self.conn.commit()
-                    return True, count
-                self.conn.commit()
-                return False, count
-            self.conn.commit()
-            return False, None
-
-    def is_channel_user_recorded(self, channel_id, user_id):
-        with lock:
-            self.cur.execute("SELECT 1 FROM forced_channel_users WHERE channel_id=? AND user_id=?", (channel_id, user_id))
-            return self.cur.fetchone() is not None
-
-    # Vazifalar
+    # ============= Vazifalar =============
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -323,7 +359,7 @@ class DB:
 
     def add_task(self, channel_id, username, name, url, reward=0.25):
         with lock:
-            self.cur.execute("INSERT OR IGNORE INTO tasks(channel_id, channel_username, channel_name, channel_url, reward) VALUES(?,?,?,?,?)", 
+            self.cur.execute("INSERT OR IGNORE INTO tasks(channel_id, channel_username, channel_name, channel_url, reward) VALUES(?,?,?,?,?)",
                              (channel_id, username, name, url, reward))
             self.conn.commit()
 
@@ -351,39 +387,6 @@ class DB:
             self.cur.execute("SELECT task_id FROM user_tasks WHERE user_id=?", (user_id,))
             return [row[0] for row in self.cur.fetchall()]
 
-    def check_ban(self, uid):
-        with lock:
-            self.cur.execute("SELECT is_banned FROM users WHERE user_id=?", (uid,))
-            row = self.cur.fetchone()
-            return row and row[0] == 1
-
-    def ban_user(self, uid):
-        with lock:
-            self.cur.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (uid,))
-            self.conn.commit()
-
-    def unban_user(self, uid):
-        with lock:
-            self.cur.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (uid,))
-            self.conn.commit()
-
-    def search_user(self, query):
-        with lock:
-            self.cur.execute("SELECT user_id, username, first_name, invites, stars, vip, daily_streak FROM users WHERE user_id=? OR username LIKE ? OR first_name LIKE ?", (query, f"%{query}%", f"%{query}%"))
-            return self.cur.fetchall()
-
-    def get_stats(self):
-        with lock:
-            s = {}
-            self.cur.execute("SELECT COUNT(*) FROM users"); s["users"] = self.cur.fetchone()[0]
-            self.cur.execute("SELECT SUM(invites) FROM users"); s["invites"] = self.cur.fetchone()[0] or 0
-            self.cur.execute("SELECT SUM(stars) FROM users"); s["stars"] = float(self.cur.fetchone()[0] or 0)
-            self.cur.execute("SELECT COUNT(*) FROM users WHERE vip=1"); s["vip"] = self.cur.fetchone()[0]
-            self.cur.execute("SELECT SUM(total_spent) FROM users"); s["spent"] = float(self.cur.fetchone()[0] or 0)
-            self.cur.execute("SELECT COUNT(*) FROM invite_history"); s["total_invites"] = self.cur.fetchone()[0]
-            self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
-            return s
-
 db = DB()
 
 # ================= SHOP =================
@@ -402,27 +405,17 @@ SHOP = {
 
 # ================= YORDAMCHI FUNKSIYALAR =================
 def check_sub(uid):
+    """Majburiy kanallarga obuna tekshiruvi. Bot tekshira olmasa -> obuna bo'lgan deb hisoblanadi."""
     channels = db.get_forced_channels()
     not_sub = []
-    for ch_id, username, name, url, max_users in channels:
+    for ch_id, username, name, url in channels:
         try:
             member = bot.get_chat_member(ch_id, uid)
-            if member.status in ['member', 'administrator', 'creator']:
-                removed, count = db.record_channel_user(ch_id, uid)
-                if removed:
-                    try:
-                        bot.send_message(ADMIN_ID, f"⚠️ Kanal {name} ({ch_id}) {count} foydalanuvchiga yetdi va majburiy ro'yxatdan olib tashlandi!")
-                    except:
-                        pass
-            else:
+            if member.status not in ['member', 'administrator', 'creator']:
                 not_sub.append({"id": ch_id, "username": username, "name": name, "url": url})
         except Exception as e:
-            logger.error(f"Kanal tekshiruvi xatosi {ch_id}: {e}")
-            try:
-                bot.send_message(ADMIN_ID, f"❌ Bot kanalda admin emas yoki get_chat_member ishlamayapti: {name} ({ch_id})\nIltimos, botni kanalga admin qiling!")
-            except:
-                pass
-            not_sub.append({"id": ch_id, "username": username, "name": name, "url": url})
+            logger.warning(f"Tekshirib bo'lmadi {ch_id}: {e}")
+            continue
     return not_sub
 
 def add_footer(text):
@@ -431,13 +424,16 @@ def add_footer(text):
     return f"{text}\n\n{'─' * 20}\n💡 <i>{mot}</i>\n{ad}"
 
 def format_stars(stars):
-    return str(int(stars)) if stars == int(stars) else f"{stars:.2f}"
+    if stars == int(stars):
+        return str(int(stars))
+    return f"{stars:.2f}"
 
 def get_invite_link(uid):
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
-# ================= TOP O'ZGARISHI =================
+# ================= TOP O'ZGARISHINI TEKSHIRISH =================
 last_top_hash = ""
+
 def get_top_hash():
     top = db.get_top(10)
     return str([(row[2], row[3]) for row in top])
@@ -456,6 +452,8 @@ def start(m):
     uid = m.from_user.id
     if db.check_ban(uid):
         return bot.send_message(m.chat.id, "❌ Bloklangansiz!")
+    
+    # Referal (taklif linki)
     if m.text and len(m.text.split()) > 1:
         try:
             ref = int(m.text.split()[1])
@@ -465,6 +463,8 @@ def start(m):
                 db.add_invite(ref)
         except:
             pass
+    
+    # Majburiy obuna tekshiruvi
     not_sub = check_sub(uid)
     if not_sub:
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -473,37 +473,56 @@ def start(m):
         markup.add(types.InlineKeyboardButton("✅ OBUNA BO'LDIM", callback_data="check_sub"))
         channels = "\n".join([f"• {ch['name']}: {ch['username']}" for ch in not_sub])
         return bot.send_message(m.chat.id, f"❌ Obuna bo'ling:\n\n{channels}", reply_markup=markup)
+    
     db.create_user(uid, m.from_user.username, m.from_user.first_name)
     u = db.get(uid)
     vip_status = "✅ HA" if u["vip"] else "❌ YO'Q"
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(types.InlineKeyboardButton("🛒 DO'KON", callback_data="shop"), types.InlineKeyboardButton(f"🎁 +{DAILY_BONUS}⭐", callback_data="daily"))
     markup.add(types.InlineKeyboardButton("🏆 TOP", callback_data="top"), types.InlineKeyboardButton("📊 PROFIL", callback_data="profile"))
     markup.add(types.InlineKeyboardButton("🔗 LINK", callback_data="link"), types.InlineKeyboardButton("📜 XARIDLAR", callback_data="purchases"))
     markup.add(types.InlineKeyboardButton("✅ VAZIFALAR", callback_data="tasks"))
-    text = f"🌟 <b>STARS BOT</b>\n\n👤 <b>{m.from_user.first_name}</b>\n👥 Takliflar: <b>{u['invites']}</b> (4 ta = 1⭐)\n⭐ Yulduzlar: <b>{format_stars(u['stars'])}</b>\n👑 VIP: <b>{vip_status}</b>\n🔥 Streak: {u['streak']} kun\n\n🎯 <i>4 ta taklif = 1⭐</i>"
+    
+    text = f"""
+🌟 <b>STARS BOT</b>
+
+👤 <b>{m.from_user.first_name}</b>
+👥 Takliflar: <b>{u['invites']}</b> (4 ta = 1⭐)
+⭐ Yulduzlar: <b>{format_stars(u['stars'])}</b>
+👑 VIP: <b>{vip_status}</b>
+🔥 Streak: {u['streak']} kun
+
+🎯 <i>4 ta taklif = 1⭐</i>
+"""
     bot.send_message(m.chat.id, add_footer(text), reply_markup=markup)
 
-# ================= GURUHGA QO'SHISH =================
+# ================= GURUHGA QO'SHISH (SHAXSIY XABAR YO'Q) =================
 @bot.message_handler(content_types=['new_chat_members'])
 def new_members(message):
     if message.chat.id != GROUP_ID:
         return
+    
     for member in message.new_chat_members:
         if member.is_bot:
             continue
+        
         inviter_id = message.from_user.id
         invited_id = member.id
+        
         if inviter_id == invited_id:
             continue
+        
         if db.check_duplicate(inviter_id, invited_id):
             continue
+        
         db.create_user(inviter_id, message.from_user.username, message.from_user.first_name)
         db.create_user(invited_id, member.username, member.first_name)
         db.add_history(inviter_id, invited_id, member.first_name, "group")
         db.add_invite(inviter_id)
+    
     try:
-        bot.send_message(message.chat.id, f"✅ {len(message.new_chat_members)} ta yangi a'zo qo'shildi!")
+        bot.send_message(message.chat.id, f"✅ {len(message.new_chat_members)} ta yangi a'zo qo'shildi! Top o'zgarsa ko'rsatiladi.")
     except:
         pass
 
@@ -512,6 +531,7 @@ def new_members(message):
 def callback(call):
     uid = call.from_user.id
     data = call.data
+    
     if data == "check_sub":
         not_sub = check_sub(uid)
         if not_sub:
@@ -525,6 +545,7 @@ def callback(call):
             bot.answer_callback_query(call.id, "✅ Xush kelibsiz!", show_alert=False)
             start(call.message)
         return
+    
     if data == "daily":
         ok, ns, bonus, streak, extra = db.give_daily_bonus(uid)
         if ok:
@@ -535,17 +556,20 @@ def callback(call):
         else:
             bot.answer_callback_query(call.id, "❌ Bugun olgansiz!", show_alert=True)
         return
+    
     if data == "shop":
         u = db.get(uid)
         markup = types.InlineKeyboardMarkup(row_width=2)
         for item_id, item in SHOP.items():
             can = "✅" if u["stars"] >= item["price"] else "🔒"
             markup.add(types.InlineKeyboardButton(f"{can} {item['emoji']} {item['name']} {item['price']}⭐", callback_data=f"buy_{item_id}"))
-        bot.send_message(call.message.chat.id, add_footer(f"🛒 DO'KON\n\n⭐ Balans: {format_stars(u['stars'])}"), reply_markup=markup)
+        text = f"🛒 <b>DO'KON</b>\n\n⭐ Balans: <b>{format_stars(u['stars'])}</b>"
+        bot.send_message(call.message.chat.id, add_footer(text), reply_markup=markup)
+    
     elif data == "top":
         top = db.get_top(10)
         if top:
-            text = "🏆 TOP 10 (takliflar bo'yicha)\n\n"
+            text = "🏆 <b>TOP 10 (takliflar bo'yicha)</b>\n\n"
             for i, (u, n, inv, st, v, streak) in enumerate(top, 1):
                 user = f"@{u}" if u else n
                 medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
@@ -554,40 +578,70 @@ def callback(call):
             bot.send_message(call.message.chat.id, add_footer(text))
         else:
             bot.send_message(call.message.chat.id, "❌ Hali top yo'q!")
+    
     elif data == "profile":
         u = db.get(uid)
         vip_status = "✅ HA" if u["vip"] else "❌ YO'Q"
-        text = f"📊 PROFIL\n\n👤 {call.from_user.first_name}\n🆔 <code>{uid}</code>\n👑 VIP: {vip_status}\n🔥 Streak: {u['streak']} kun\n👥 Takliflar: {u['invites']} (4 ta = 1⭐)\n⭐ Yulduzlar: {format_stars(u['stars'])}\n💎 Topgan: {format_stars(u['earned'])}⭐\n💸 Sarflangan: {format_stars(u['spent'])}⭐"
+        text = f"""
+📊 <b>PROFIL</b>
+
+👤 {call.from_user.first_name}
+🆔 <code>{uid}</code>
+👑 VIP: <b>{vip_status}</b>
+🔥 Streak: <b>{u['streak']}</b> kun
+👥 Takliflar: <b>{u['invites']}</b> (4 ta = 1⭐)
+⭐ Yulduzlar: <b>{format_stars(u['stars'])}</b>
+💎 Topgan: <b>{format_stars(u['earned'])}</b>⭐
+💸 Sarflangan: <b>{format_stars(u['spent'])}</b>⭐
+"""
         bot.send_message(call.message.chat.id, add_footer(text))
+    
     elif data == "link":
-        bot.send_message(call.message.chat.id, add_footer(f"🔗 <code>{get_invite_link(uid)}</code>\n\n📢 {GROUP_LINK}"))
+        link = get_invite_link(uid)
+        bot.send_message(call.message.chat.id, add_footer(f"🔗 <code>{link}</code>\n\n📢 {GROUP_LINK}"))
+    
     elif data == "purchases":
         purchases = db.get_purchase_history(uid)
         if purchases:
-            text = "📜 XARIDLAR\n\n" + "\n".join(f"{emoji} {name} - {format_stars(price)}⭐" for name, emoji, price, dt in purchases)
+            text = "📜 <b>XARIDLAR</b>\n\n"
+            for name, emoji, price, dt in purchases:
+                text += f"{emoji} {name} - {format_stars(price)}⭐\n"
         else:
             text = "❌ Hali xarid yo'q!"
         bot.send_message(call.message.chat.id, add_footer(text))
+    
     elif data == "tasks":
         tasks = db.get_tasks()
         completed = db.get_user_completed_tasks(uid)
         if not tasks:
             bot.send_message(call.message.chat.id, "❌ Hozircha vazifalar yo'q.")
             return
-        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup = types.InlineKeyboardMarkup(row_width=1)
         for tid, ch_id, username, name, url, reward in tasks:
             if tid in completed:
                 markup.add(types.InlineKeyboardButton(f"✅ {name} (bajarilgan)", callback_data=f"task_{tid}_done"))
             else:
                 markup.add(types.InlineKeyboardButton(f"📢 {name} (+{reward}⭐)", url=url))
-        markup.add(types.InlineKeyboardButton("🔙 ORQA", callback_data="back_to_menu"))
-        bot.send_message(call.message.chat.id, "✅ VAZIFALAR\n\nKanalga obuna bo'ling, so'ng 'Tekshirish' tugmasini bosing.", reply_markup=markup)
+        # Har bir vazifa uchun tekshirish tugmasi
+        markup2 = types.InlineKeyboardMarkup(row_width=2)
+        for tid, ch_id, username, name, url, reward in tasks:
+            if tid not in completed:
+                markup2.add(types.InlineKeyboardButton(f"🔍 {name}", callback_data=f"task_{tid}_check"))
+        if markup2.keyboard:
+            bot.send_message(call.message.chat.id, "✅ Vazifalar: Kanalga obuna bo'ling, so'ng 'Tekshirish' tugmasini bosing.", reply_markup=markup2)
+        else:
+            bot.send_message(call.message.chat.id, "✅ Barcha vazifalarni bajargan-siz!")
+    
     elif data.startswith("task_"):
         parts = data.split("_")
         if len(parts) == 3 and parts[2] == "check":
             task_id = int(parts[1])
             tasks = db.get_tasks()
-            task = next((t for t in tasks if t[0] == task_id), None)
+            task = None
+            for t in tasks:
+                if t[0] == task_id:
+                    task = t
+                    break
             if not task:
                 bot.answer_callback_query(call.id, "❌ Vazifa topilmadi!")
                 return
@@ -597,19 +651,24 @@ def callback(call):
                 if member.status in ['member', 'administrator', 'creator']:
                     if db.complete_task(uid, tid, reward):
                         bot.answer_callback_query(call.id, f"✅ +{reward}⭐ yulduz berildi!", show_alert=True)
-                        callback_data = "tasks"
-                        callback(call)
+                        callback(call)  # yangilash uchun
                     else:
                         bot.answer_callback_query(call.id, "❌ Siz bu vazifani avval bajargan-siz!", show_alert=True)
                 else:
                     bot.answer_callback_query(call.id, f"❌ {name} kanaliga obuna bo'lmagansiz!", show_alert=True)
             except Exception as e:
                 logger.warning(f"Task tekshiruvi xatosi {ch_id}: {e}")
-                bot.answer_callback_query(call.id, f"❌ Kanalga obuna bo'lmagansiz yoki bot admin emas!", show_alert=True)
+                if db.complete_task(uid, tid, reward):
+                    bot.answer_callback_query(call.id, f"✅ +{reward}⭐ (tekshirib bo'lmadi, hisoblandi)", show_alert=True)
+                    callback(call)
+                else:
+                    bot.answer_callback_query(call.id, "❌ Xatolik yoki avval bajarilgan!", show_alert=True)
         return
+    
     elif data == "back_to_menu":
         start(call.message)
         return
+    
     elif data.startswith("buy_"):
         item_id = int(data.split("_")[1])
         item = SHOP.get(item_id)
@@ -623,11 +682,26 @@ def callback(call):
         else:
             ns = db.sub_star(uid, price)
             db.add_purchase_history(uid, item['name'], item['emoji'], price)
-            extra = "\n👑 VIP BERILDI!" if price >= 50 and not u["vip"] else ""
+            extra = ""
             if price >= 50:
                 db.grant_vip(uid)
+                extra = "\n👑 <b>VIP BERILDI!</b>"
             admin_link = f"tg://user?id={ADMIN_ID}"
-            caption = f"✅ SOVG'A BERILDI!\n\n{item['emoji']} {item['name']}\n{item['desc']}\n\n💰 Sarflandi: {price}⭐\n⭐ Qoldi: {format_stars(ns)}{extra}\n\n{'─'*20}\n📦 HAQIQIY SOVG'A:\n👤 <a href='{admin_link}'>{ADMIN_USERNAME}</a>\n⏳ Admin yuboradi\n📞 <a href='{admin_link}'>BOG'LANISH</a>"
+            caption = f"""
+✅ <b>SOVG'A BERILDI!</b>
+
+{item['emoji']} <b>{item['name']}</b>
+📝 {item['desc']}
+
+💰 Sarflandi: <b>{price}⭐</b>
+⭐ Qoldi: <b>{format_stars(ns)}</b>{extra}
+
+{'─' * 20}
+📦 <b>HAQIQIY SOVG'A:</b>
+👤 <a href='{admin_link}'>{ADMIN_USERNAME}</a>
+⏳ Admin yuboradi
+📞 <a href='{admin_link}'>BOG'LANISH</a>
+"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=add_footer(caption))
             bot.answer_callback_query(call.id, "✅ Berildi!", show_alert=True)
             try:
@@ -638,37 +712,123 @@ def callback(call):
                 bot.send_message(ADMIN_ID, f"🛍 {call.from_user.first_name}\n🆔 <code>{uid}</code>\n🎁 {item['name']}\n💰 {price}⭐\n📞 <a href='tg://user?id={uid}'>BOG'LANISH</a>")
             except:
                 pass
+    
     bot.answer_callback_query(call.id)
 
 # ================= ADMIN BUYRUG'LARI =================
 @bot.message_handler(commands=["admin"])
 def admin_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     s = db.get_stats()
-    text = f"🔐 ADMIN PANEL\n\n👥 Foydalanuvchilar: {s['users']}\n📊 Jami takliflar: {s['total_invites']}\n⭐ Yulduzlar: {format_stars(s['stars'])}\n👑 VIP: {s['vip']}\n💸 Sarflangan: {format_stars(s['spent'])}\n🛍 Xaridlar: {s['purchases']}\n\nBuyruqlar:\n/addstars /ban /unban /search /broadcast /send\n/addchannel /removechannel /channellist\n/addtask /removetask /tasklist"
+    text = f"🔐 <b>ADMIN PANEL</b>\n\n👥 Foydalanuvchilar: {s['users']}\n📊 Jami takliflar: {s['total_invites']}\n⭐ Muomaladagi yulduzlar: {format_stars(s['stars'])}\n👑 VIP: {s['vip']}\n💸 Sarflangan: {format_stars(s['spent'])}\n🛍 Xaridlar: {s['purchases']}\n\n<b>Buyruqlar:</b>\n/addstars /ban /unban /search /broadcast /send\n/addchannel /removechannel /channellist\n/addtask /removetask /tasklist"
     bot.send_message(m.chat.id, text)
 
+@bot.message_handler(commands=["addstars"])
+def addstars_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = m.text.split()
+        uid, amount = int(parts[1]), float(parts[2])
+        db.create_user(uid, None, "User")
+        ns = db.add_stars_admin(uid, amount)
+        bot.reply_to(m, f"✅ {uid} +{format_stars(amount)}⭐ | Jami: {format_stars(ns)}⭐")
+    except:
+        bot.reply_to(m, "❌ /addstars [id] [miqdor]")
+
+@bot.message_handler(commands=["send"])
+def send_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = m.text.split(maxsplit=2)
+        uid, text = int(parts[1]), parts[2]
+        bot.send_message(uid, f"📩 <b>ADMIN:</b>\n\n{text}")
+        bot.reply_to(m, f"✅ {uid} ga yuborildi!")
+    except:
+        bot.reply_to(m, "❌ /send [id] [matn]")
+
+@bot.message_handler(commands=["ban"])
+def ban_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        db.ban_user(int(m.text.split()[1]))
+        bot.reply_to(m, "✅ Ban!")
+    except:
+        bot.reply_to(m, "❌ /ban [id]")
+
+@bot.message_handler(commands=["unban"])
+def unban_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        db.unban_user(int(m.text.split()[1]))
+        bot.reply_to(m, "✅ Unban!")
+    except:
+        bot.reply_to(m, "❌ /unban [id]")
+
+@bot.message_handler(commands=["search"])
+def search_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        query = m.text.split(maxsplit=1)[1]
+        results = db.search_user(query)
+        if results:
+            text = "🔍 Natijalar:\n"
+            for uid, un, nm, inv, st, vip, streak in results[:10]:
+                user = f"@{un}" if un else nm
+                text += f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)} 🔥{streak}\n"
+            bot.reply_to(m, text)
+        else:
+            bot.reply_to(m, "❌ Topilmadi!")
+    except:
+        bot.reply_to(m, "❌ /search [id/username]")
+
+@bot.message_handler(commands=["broadcast"])
+def broadcast_cmd(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    try:
+        text = m.text.split(maxsplit=1)[1]
+        users = db.get_all_users_for_ad()
+        sent = 0
+        for uid in users:
+            try:
+                bot.send_message(uid, f"📢 <b>E'LON</b>\n\n{text}")
+                sent += 1
+                time.sleep(0.1)
+            except:
+                pass
+        bot.reply_to(m, f"✅ {sent}/{len(users)}")
+    except:
+        bot.reply_to(m, "❌ /broadcast [matn]")
+
+# ============= MAJBURIY KANALLAR (ADMIN) =============
 @bot.message_handler(commands=["addchannel"])
 def add_channel_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     try:
-        parts = m.text.split(maxsplit=5)
+        parts = m.text.split(maxsplit=4)
         if len(parts) < 5:
-            bot.reply_to(m, "❌ /addchannel [chat_id] [username] [name] [url] [limit (ixtiyoriy)]\nMasalan: /addchannel -100123456789 @kanal Kanal https://t.me/kanal 1000")
+            bot.reply_to(m, "❌ /addchannel [chat_id] [username] [name] [url]\nMasalan: /addchannel -100123456789 @kanal Kanal https://t.me/kanal")
             return
         ch_id = int(parts[1])
         username = parts[2]
         name = parts[3]
         url = parts[4]
-        max_users = int(parts[5]) if len(parts) > 5 else 0
-        db.add_forced_channel(ch_id, username, name, url, max_users)
-        bot.reply_to(m, f"✅ Kanal qo'shildi: {name} (limit: {max_users if max_users>0 else 'cheksiz'})")
+        db.add_forced_channel(ch_id, username, name, url)
+        bot.reply_to(m, f"✅ Kanal qo'shildi: {name}")
     except Exception as e:
         bot.reply_to(m, f"❌ Xato: {e}")
 
 @bot.message_handler(commands=["removechannel"])
 def remove_channel_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     try:
         ch_id = int(m.text.split()[1])
         db.remove_forced_channel(ch_id)
@@ -678,26 +838,26 @@ def remove_channel_cmd(m):
 
 @bot.message_handler(commands=["channellist"])
 def channel_list_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     channels = db.get_forced_channels()
     if channels:
-        text = "📢 Majburiy kanallar:\n"
-        for ch_id, username, name, url, max_users in channels:
-            db.cur.execute("SELECT COUNT(*) FROM forced_channel_users WHERE channel_id=?", (ch_id,))
-            current = db.cur.fetchone()[0]
-            limit_str = f"{current}/{max_users}" if max_users>0 else f"{current}/cheksiz"
-            text += f"🆔 {ch_id} | {name} | {username} | {limit_str}\n"
+        text = "📢 <b>Majburiy kanallar:</b>\n"
+        for ch_id, username, name, url in channels:
+            text += f"🆔 {ch_id} | {name} | {username}\n"
         bot.reply_to(m, text)
     else:
         bot.reply_to(m, "❌ Hech qanday majburiy kanal yo'q.")
 
+# ============= VAZIFALAR (ZADANIYA) ADMIN =============
 @bot.message_handler(commands=["addtask"])
 def add_task_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     try:
         parts = m.text.split(maxsplit=5)
         if len(parts) < 5:
-            bot.reply_to(m, "❌ /addtask [chat_id] [username] [name] [url] [reward (ixtiyoriy)]\nMasalan: /addtask -100123 @kanal Kanal https://t.me/kanal 0.25")
+            bot.reply_to(m, "❌ /addtask [chat_id] [username] [name] [url] [reward (ixtiyoriy)]\nMasalan: /addtask -100123456789 @kanal Kanal https://t.me/kanal 0.25")
             return
         ch_id = int(parts[1])
         username = parts[2]
@@ -711,7 +871,8 @@ def add_task_cmd(m):
 
 @bot.message_handler(commands=["removetask"])
 def remove_task_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     try:
         task_id = int(m.text.split()[1])
         db.remove_task(task_id)
@@ -721,101 +882,28 @@ def remove_task_cmd(m):
 
 @bot.message_handler(commands=["tasklist"])
 def task_list_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
+    if m.from_user.id != ADMIN_ID:
+        return
     tasks = db.get_tasks()
     if tasks:
-        text = "📋 Vazifalar:\n" + "\n".join(f"🆔 {tid} | {name} | +{reward}⭐" for tid, ch_id, username, name, url, reward in tasks)
+        text = "📋 <b>Vazifalar:</b>\n"
+        for tid, ch_id, username, name, url, reward in tasks:
+            text += f"🆔 {tid} | {name} | +{reward}⭐\n"
         bot.reply_to(m, text)
     else:
         bot.reply_to(m, "❌ Hech qanday vazifa yo'q.")
-
-@bot.message_handler(commands=["addstars"])
-def addstars_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        parts = m.text.split()
-        uid, amount = int(parts[1]), float(parts[2])
-        db.create_user(uid, None, "User")
-        ns = db.add_stars_admin(uid, amount)
-        bot.reply_to(m, f"✅ {uid} +{format_stars(amount)}⭐ | Jami: {format_stars(ns)}⭐")
-    except:
-        bot.reply_to(m, "❌ /addstars [id] [miqdor]")
-
-@bot.message_handler(commands=["send"])
-def send_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        parts = m.text.split(maxsplit=2)
-        uid, text_msg = int(parts[1]), parts[2]
-        bot.send_message(uid, f"📩 ADMIN:\n\n{text_msg}")
-        bot.reply_to(m, f"✅ {uid} ga yuborildi!")
-    except:
-        bot.reply_to(m, "❌ /send [id] [matn]")
-
-@bot.message_handler(commands=["ban"])
-def ban_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        db.ban_user(int(m.text.split()[1]))
-        bot.reply_to(m, "✅ Ban!")
-    except:
-        bot.reply_to(m, "❌ /ban [id]")
-
-@bot.message_handler(commands=["unban"])
-def unban_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        db.unban_user(int(m.text.split()[1]))
-        bot.reply_to(m, "✅ Unban!")
-    except:
-        bot.reply_to(m, "❌ /unban [id]")
-
-@bot.message_handler(commands=["search"])
-def search_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        query = m.text.split(maxsplit=1)[1]
-        results = db.search_user(query)
-        if results:
-            text = "🔍 Natijalar:\n"
-            for uid, un, nm, inv, st, vip, streak in results[:10]:
-                user = f"@{un}" if un else nm
-                text += f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)}\n"
-            bot.reply_to(m, text)
-        else:
-            bot.reply_to(m, "❌ Topilmadi!")
-    except:
-        bot.reply_to(m, "❌ /search [id/username]")
-
-@bot.message_handler(commands=["broadcast"])
-def broadcast_cmd(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        broadcast_text = m.text.split(maxsplit=1)[1]
-        users = db.get_all_users_for_ad()
-        sent = 0
-        for uid in users:
-            try:
-                bot.send_message(uid, f"📢 E'LON\n\n{broadcast_text}")
-                sent += 1
-                time.sleep(0.1)
-            except:
-                pass
-        bot.reply_to(m, f"✅ {sent}/{len(users)}")
-    except:
-        bot.reply_to(m, "❌ /broadcast [matn]")
 
 # ================= FOYDALANUVCHI BUYRUG'LARI =================
 @bot.message_handler(commands=["stats"])
 def stats_cmd(m):
     u = db.get(m.from_user.id)
-    vip_status = "HA" if u["vip"] else "YO'Q"
-    text = f"📊 Sizning statistikangiz:\n👥 Takliflar: {u['invites']}\n⭐ Yulduzlar: {format_stars(u['stars'])}\n👑 VIP: {vip_status}\n🔥 Streak: {u['streak']} kun"
-    bot.reply_to(m, add_footer(text))
+    vip_status = "✅ HA" if u["vip"] else "❌ YO'Q"
+    bot.reply_to(m, add_footer(f"📊 Sizning statistikangiz:\n👥 Takliflar: {u['invites']}\n⭐ Yulduzlar: {format_stars(u['stars'])}\n👑 VIP: {vip_status}\n🔥 Streak: {u['streak']} kun"))
 
 @bot.message_handler(commands=["daily"])
 def daily_cmd(m):
-    ok, ns, bonus, streak, extra = db.give_daily_bonus(m.from_user.id)
+    uid = m.from_user.id
+    ok, ns, bonus, streak, extra = db.give_daily_bonus(uid)
     if ok:
         bot.reply_to(m, add_footer(f"🎁 +{bonus}⭐ | Jami: {format_stars(ns)}⭐ | 🔥 Streak: {streak}"))
     else:
@@ -825,27 +913,28 @@ def daily_cmd(m):
 def link_cmd(m):
     bot.reply_to(m, f"🔗 Taklif linkingiz:\n<code>{get_invite_link(m.from_user.id)}</code>")
 
+@bot.message_handler(commands=["help"])
+def help_cmd(m):
+    bot.reply_to(m, f"🤖 <b>Yordam</b>\n\n/start - Botni boshlash\n/stats - Statistika\n/daily - Kunlik bonus\n/link - Taklif linki\n/tasks - Vazifalar\n/help - Yordam\n\n📢 Guruh: {GROUP_LINK}\n🎁 4 ta taklif = 1⭐\n🎁 Kunlik bonus: +{DAILY_BONUS}⭐")
+
 @bot.message_handler(commands=["tasks"])
 def tasks_cmd(m):
+    uid = m.from_user.id
     tasks = db.get_tasks()
-    completed = db.get_user_completed_tasks(m.from_user.id)
+    completed = db.get_user_completed_tasks(uid)
     if not tasks:
         bot.reply_to(m, "❌ Hozircha vazifalar yo'q.")
         return
     markup = types.InlineKeyboardMarkup(row_width=2)
     for tid, ch_id, username, name, url, reward in tasks:
-        if tid in completed:
-            markup.add(types.InlineKeyboardButton(f"✅ {name} (bajarilgan)", callback_data=f"task_{tid}_done"))
-        else:
-            markup.add(types.InlineKeyboardButton(f"📢 {name} (+{reward}⭐)", url=url))
-    bot.reply_to(m, "✅ Vazifalar:\nKanalga obuna bo'ling, so'ng 'Tekshirish' tugmasini bosing.", reply_markup=markup)
+        if tid not in completed:
+            markup.add(types.InlineKeyboardButton(f"🔍 {name}", callback_data=f"task_{tid}_check"))
+    if markup.keyboard:
+        bot.reply_to(m, "✅ Vazifalar: Kanalga obuna bo'ling, so'ng 'Tekshirish' tugmasini bosing.", reply_markup=markup)
+    else:
+        bot.reply_to(m, "✅ Barcha vazifalarni bajargan-siz!")
 
-@bot.message_handler(commands=["help"])
-def help_cmd(m):
-    help_text = f"🤖 Yordam\n\n/start - Boshlash\n/stats - Statistika\n/daily - Kunlik bonus\n/link - Taklif linki\n/tasks - Vazifalar\n/help - Yordam\n\n📢 Guruh: {GROUP_LINK}\n🎁 4 ta taklif = 1⭐\n🎁 Kunlik bonus: +{DAILY_BONUS}⭐"
-    bot.reply_to(m, help_text)
-
-# ================= LEADERBOARD SCHEDULER =================
+# ================= LEADERBOARD SCHEDULER (majburiy kanallarga xabar YO'Q) =================
 def leaderboard_scheduler():
     empty_count = 0
     while True:
@@ -853,31 +942,27 @@ def leaderboard_scheduler():
             if should_send_leaderboard():
                 top = db.get_top(10)
                 if top:
-                    text = "🏆 TOP 10 TAKLIFCHILAR\n\n"
+                    text = "🏆 <b>TOP 10 TAKLIFCHILAR</b>\n\n"
                     for i, (u, n, inv, st, v, streak) in enumerate(top, 1):
                         user = f"@{u}" if u else n
                         medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
                         vip_mark = "👑" if v else ""
                         text += f"{medal} <b>{user}</b> {vip_mark}\n👥{inv} ⭐{format_stars(st)} 🔥{streak}\n\n"
                     text += f"\n🔥 4 ta taklif = 1⭐ | 🔗 @{BOT_USERNAME}"
-                    for ch_id, username, name, url, _ in db.get_forced_channels():
-                        try: bot.send_message(ch_id, text)
-                        except: pass
+                    # ********** KANALLARGA YUBORISH O'CHIRILGAN **********
                     empty_count = 0
             else:
                 empty_count += 1
                 if empty_count >= 60:
                     top = db.get_top(10)
                     if top:
-                        text = "🏆 TOP 10 (avtomatik)\n\n"
+                        text = "🏆 <b>TOP 10 (avtomatik)</b>\n\n"
                         for i, (u, n, inv, st, v, streak) in enumerate(top, 1):
                             user = f"@{u}" if u else n
                             medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
                             text += f"{medal} <b>{user}</b> {'👑' if v else ''}\n👥{inv} ⭐{format_stars(st)}\n\n"
-                        text += f"\n🔗 @{BOT_USERNAME}"
-                        for ch_id, username, name, url, _ in db.get_forced_channels():
-                            try: bot.send_message(ch_id, text)
-                            except: pass
+                        text += f"🔗 @{BOT_USERNAME}"
+                        # ********** KANALLARGA YUBORISH O'CHIRILGAN **********
                     empty_count = 0
         except Exception as e:
             logger.error(f"Leaderboard: {e}")
@@ -894,7 +979,7 @@ def auto_ad_sender():
                     markup = types.InlineKeyboardMarkup()
                     markup.add(types.InlineKeyboardButton("🛒 Do'kon", callback_data="shop"), types.InlineKeyboardButton("👥 Guruh", url=GROUP_LINK))
                     try:
-                        bot.send_photo(uid, gift['photo'], caption=f"🎁 {gift['name']}\n{gift['desc']}\n\n⭐ Do'kondan oling!\n🔗 @{BOT_USERNAME}", reply_markup=markup)
+                        bot.send_photo(uid, gift['photo'], caption=f"🎁 <b>{gift['name']}</b>\n{gift['desc']}\n\n⭐ Do'kondan oling!\n🔗 @{BOT_USERNAME}", reply_markup=markup)
                         db.update_last_ad(uid)
                     except:
                         pass
@@ -903,30 +988,39 @@ def auto_ad_sender():
             pass
         time.sleep(172800)
 
+# ================= FLASK HTTP SERVER (Render uchun) =================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot ishlamoqda", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
 # ================= MAIN =================
 if __name__ == "__main__":
-    print("="*50)
+    print("=" * 50)
     print("🚀 STARS BOT ISHGA TUSHIRILDI")
     print(f"💰 Kunlik bonus: {DAILY_BONUS}⭐")
     print(f"👤 Admin: {ADMIN_USERNAME}")
-    print("📊 Taklif tizimi: 4 ta = 1⭐")
-    print("📢 Majburiy kanallar limit bilan boshqariladi")
-    print("🌐 HTTP server port uchun ishga tushiriladi")
-    print("="*50)
+    print(f"📊 Taklif tizimi: 4 ta = 1⭐")
+    print("📢 Majburiy kanallarga xabar yuborilmaydi")
+    print("=" * 50)
     
-    # Flask serverini alohida threadda ishga tushirish
-    FlaskThread(target=run_http, daemon=True).start()
-    
-    # Webhook o'chirish
     try:
         requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
         time.sleep(1)
     except:
         pass
     
-    # Scheduler va ad sender threadlari
+    # Leaderboard va reklama thread'lari
     Thread(target=leaderboard_scheduler, daemon=True).start()
     Thread(target=auto_ad_sender, daemon=True).start()
+    
+    # Flask server thread
+    Thread(target=run_flask, daemon=True).start()
     
     # Bot polling
     while True:
