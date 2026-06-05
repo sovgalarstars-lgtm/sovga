@@ -100,12 +100,14 @@ class DB:
             );
             """)
             self.conn.commit()
+            # Default majburiy kanallar (faqat ishlaydiganlari)
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
                                  (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars"))
                 self.conn.commit()
 
+    # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
@@ -119,6 +121,7 @@ class DB:
                 return {"successful_invites": row[0] or 0, "stars": float(row[1] or 0), "vip": row[2] or 0, "spent": float(row[3] or 0), "last_daily": row[4], "streak": row[5] or 0, "earned": float(row[6] or 0)}
             return {"successful_invites": 0, "stars": 0.0, "vip": 0, "spent": 0.0, "last_daily": None, "streak": 0, "earned": 0.0}
 
+    # ---------- Referal ----------
     def add_pending_referral(self, invited_id, inviter_id):
         with lock:
             self.cur.execute("INSERT OR REPLACE INTO pending_referrals(invited_id, inviter_id) VALUES(?,?)", (invited_id, inviter_id))
@@ -167,6 +170,7 @@ class DB:
             self.conn.commit()
             return new_cnt, new_stars
 
+    # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -218,6 +222,7 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
+    # ---------- Boshqa ----------
     def grant_vip(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
@@ -271,6 +276,7 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
             return s
 
+    # ---------- Kanallar ----------
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url FROM forced_channels")
@@ -286,6 +292,7 @@ class DB:
             self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
             self.conn.commit()
 
+    # ---------- Vazifalar ----------
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -653,6 +660,12 @@ def user_cmd(m):
 # ================= ISHGA TUSHIRISH =================
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda (Background Worker)...")
+
+    # 409 xatosini bartaraf qilish uchun tasodifiy kechikish
+    delay = random.randint(5, 15)
+    print(f"⏳ {delay} soniya kutilmoqda...")
+    time.sleep(delay)
+
     try:
         print("Eski webhook o'chirilmoqda...")
         resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
@@ -660,6 +673,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Webhook o'chirishda xatolik (e'tiborsiz): {e}")
     time.sleep(3)
+
     while True:
         try:
             bot.infinity_polling(timeout=60, skip_pending=True)
