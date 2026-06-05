@@ -100,7 +100,6 @@ class DB:
             );
             """)
             self.conn.commit()
-            # Default majburiy kanallar (faqat ishlaydiganlari)
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
@@ -661,19 +660,25 @@ def user_cmd(m):
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda (Background Worker)...")
 
-    # 409 xatosini bartaraf qilish uchun tasodifiy kechikish
-    delay = random.randint(5, 15)
-    print(f"⏳ {delay} soniya kutilmoqda...")
-    time.sleep(delay)
-
+    # Token tekshirish
+    print("🔍 Token tekshirilmoqda...")
     try:
-        print("Eski webhook o'chirilmoqda...")
-        resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
-        print(f"Webhook o'chirildi: {resp.json()}")
+        resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/getMe", timeout=10)
+        if resp.status_code != 200 or not resp.json().get("ok"):
+            print(f"❌ Token noto'g'ri yoki bekor qilingan! Javob: {resp.json()}")
+            exit(1)
+        print(f"✅ Token to'g'ri: @{resp.json()['result']['username']}")
     except Exception as e:
-        print(f"Webhook o'chirishda xatolik (e'tiborsiz): {e}")
-    time.sleep(3)
+        print(f"❌ Token tekshirib bo'lmadi: {e}")
+        exit(1)
 
+    # Webhookni o'chirish
+    try:
+        requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
+        print("Eski webhook o'chirildi")
+    except: pass
+
+    time.sleep(3)
     while True:
         try:
             bot.infinity_polling(timeout=60, skip_pending=True)
