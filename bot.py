@@ -1,15 +1,15 @@
-import telebot
-import sqlite3
-import logging
 import os
 import time
 import random
+import logging
+import sqlite3
 import requests
-from flask import Flask
-from telebot import types
-from datetime import datetime, timedelta
 from threading import Lock, Thread
+from datetime import datetime, timedelta
+from flask import Flask
 from dotenv import load_dotenv
+import telebot
+from telebot import types
 
 load_dotenv()
 
@@ -20,16 +20,13 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "stars_sovga_gifbot")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@Stars_5_odam_1stars")
 GROUP_ID = -1002449896845
 GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
-
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
 if not API_TOKEN:
     print("❌ BOT_TOKEN topilmadi! Iltimos Render Environment Variables ga BOT_TOKEN qo'shing.")
-    # Flask server baribir ishga tushadi, bot esa ishlamaydi
 
-# ================= BOT & LOG =================
-bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False) if API_TOKEN else None
+# ================= LOGGING =================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
@@ -38,7 +35,6 @@ lock = Lock()
 
 class DB:
     def __init__(self):
-        # /tmp ga yozish ruxsati bor
         db_path = "/tmp/bot.db"
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cur = self.conn.cursor()
@@ -105,7 +101,7 @@ class DB:
             );
             """)
             self.conn.commit()
-            # default kanallar
+            # default majburiy kanallar
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
@@ -114,52 +110,58 @@ class DB:
                                  (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars"))
                 self.conn.commit()
 
-    # user
+    # Foydalanuvchi
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
             self.conn.commit()
+
     def get(self, uid):
         with lock:
             self.cur.execute("SELECT successful_invites, stars, vip, total_spent, last_daily, daily_streak, total_earned FROM users WHERE user_id=?", (uid,))
             row = self.cur.fetchone()
             if row:
                 return {"successful_invites": row[0] or 0, "stars": float(row[1] or 0), "vip": row[2] or 0, "spent": float(row[3] or 0), "last_daily": row[4], "streak": row[5] or 0, "earned": float(row[6] or 0)}
-            return {"successful_invites":0,"stars":0.0,"vip":0,"spent":0.0,"last_daily":None,"streak":0,"earned":0.0}
+            return {"successful_invites": 0, "stars": 0.0, "vip": 0, "spent": 0.0, "last_daily": None, "streak": 0, "earned": 0.0}
 
-    # referral
+    # Referal
     def add_pending_referral(self, invited_id, inviter_id):
         with lock:
             self.cur.execute("INSERT OR REPLACE INTO pending_referrals(invited_id, inviter_id) VALUES(?,?)", (invited_id, inviter_id))
             self.conn.commit()
+
     def get_pending_inviter(self, invited_id):
         with lock:
             self.cur.execute("SELECT inviter_id FROM pending_referrals WHERE invited_id=?", (invited_id,))
             row = self.cur.fetchone()
             return row[0] if row else None
+
     def remove_pending(self, invited_id):
         with lock:
             self.cur.execute("DELETE FROM pending_referrals WHERE invited_id=?", (invited_id,))
             self.conn.commit()
+
     def add_history(self, inviter_id, invited_id, invited_name, source="link"):
         with lock:
             self.cur.execute("INSERT INTO invite_history(inviter_id, invited_id, invited_name, source) VALUES(?,?,?,?)", (inviter_id, invited_id, invited_name, source))
             self.conn.commit()
+
     def check_duplicate(self, inviter_id, invited_id):
         with lock:
             self.cur.execute("SELECT COUNT(*) FROM invite_history WHERE inviter_id=? AND invited_id=?", (inviter_id, invited_id))
             return self.cur.fetchone()[0] > 0
+
     def add_successful_invite(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET successful_invites = successful_invites + 1 WHERE user_id=?", (uid,))
             self.cur.execute("SELECT successful_invites FROM users WHERE user_id=?", (uid,))
             cnt = self.cur.fetchone()[0]
-            stars = (cnt // 2) * 1
+            stars = (cnt // 2) * 1   # 2 ta taklif = 1⭐
             self.cur.execute("UPDATE users SET stars=?, total_earned=? WHERE user_id=?", (stars, stars, uid))
             self.conn.commit()
             return cnt, stars
 
-    # stars
+    # Yulduzlar
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -168,6 +170,7 @@ class DB:
             self.cur.execute("UPDATE users SET stars=?, total_spent=total_spent+? WHERE user_id=?", (new, amount, uid))
             self.conn.commit()
             return new
+
     def add_stars_admin(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -176,6 +179,7 @@ class DB:
             self.cur.execute("UPDATE users SET stars=?, total_earned=total_earned+? WHERE user_id=?", (new, amount, uid))
             self.conn.commit()
             return new
+
     def give_daily_bonus(self, uid):
         with lock:
             self.cur.execute("SELECT last_daily, stars, daily_streak, total_earned FROM users WHERE user_id=?", (uid,))
@@ -209,40 +213,48 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
-    # other
+    # Boshqa
     def grant_vip(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
             self.conn.commit()
+
     def get_top(self, limit=10):
         with lock:
             self.cur.execute("SELECT username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY successful_invites DESC LIMIT ?", (limit,))
             return self.cur.fetchall()
+
     def get_purchase_history(self, uid):
         with lock:
             self.cur.execute("SELECT item_name, item_emoji, price, created_at FROM purchase_history WHERE user_id=? ORDER BY created_at DESC LIMIT 10", (uid,))
             return self.cur.fetchall()
+
     def add_purchase_history(self, uid, item_name, item_emoji, price):
         with lock:
             self.cur.execute("INSERT INTO purchase_history(user_id, item_name, item_emoji, price) VALUES(?,?,?,?)", (uid, item_name, item_emoji, price))
             self.conn.commit()
+
     def check_ban(self, uid):
         with lock:
             self.cur.execute("SELECT is_banned FROM users WHERE user_id=?", (uid,))
             row = self.cur.fetchone()
             return row and row[0] == 1
+
     def ban_user(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (uid,))
             self.conn.commit()
+
     def unban_user(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (uid,))
             self.conn.commit()
+
     def get_all_users_for_ad(self):
         with lock:
             self.cur.execute("SELECT user_id FROM users WHERE is_banned=0")
             return [row[0] for row in self.cur.fetchall()]
+
     def get_stats(self):
         with lock:
             s = {}
@@ -255,37 +267,43 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
             return s
 
-    # channels
+    # Majburiy kanallar
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url FROM forced_channels")
             return self.cur.fetchall()
+
     def add_forced_channel(self, channel_id, username, name, url):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)", (channel_id, username, name, url))
             self.conn.commit()
+
     def remove_forced_channel(self, channel_id):
         with lock:
             self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
             self.conn.commit()
 
-    # tasks
+    # Vazifalar
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
             return self.cur.fetchall()
+
     def add_task(self, task_type, channel_id, username, name, url, reward=TASK_REWARD):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO tasks(task_type, channel_id, channel_username, channel_name, channel_url, reward) VALUES(?,?,?,?,?,?)", (task_type, channel_id, username, name, url, reward))
             self.conn.commit()
+
     def remove_task(self, task_id):
         with lock:
             self.cur.execute("DELETE FROM tasks WHERE id=?", (task_id,))
             self.conn.commit()
+
     def is_task_completed(self, user_id, task_id):
         with lock:
             self.cur.execute("SELECT 1 FROM user_tasks WHERE user_id=? AND task_id=?", (user_id, task_id))
             return self.cur.fetchone() is not None
+
     def complete_task(self, user_id, task_id, reward):
         with lock:
             if self.is_task_completed(user_id, task_id):
@@ -294,6 +312,7 @@ class DB:
             self.cur.execute("UPDATE users SET stars = stars + ?, total_earned = total_earned + ? WHERE user_id=?", (reward, reward, user_id))
             self.conn.commit()
             return True
+
     def get_user_completed_tasks(self, user_id):
         with lock:
             self.cur.execute("SELECT task_id FROM user_tasks WHERE user_id=?", (user_id,))
@@ -317,8 +336,6 @@ SHOP = {
 
 # ================= YORDAMCHI =================
 def check_sub(uid):
-    if not API_TOKEN:
-        return []
     channels = db.get_forced_channels()
     not_sub = []
     for ch_id, username, name, url in channels:
@@ -354,8 +371,10 @@ def finalize_referral(invited_id):
         db.add_successful_invite(inviter_id)
         db.remove_pending(invited_id)
 
-# ================= BOT HANDLERLAR =================
-if bot:
+# ================= BOT HANDLERLAR (agar token mavjud bo'lsa) =================
+if API_TOKEN:
+    bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
+
     @bot.message_handler(commands=["start"])
     def start(m):
         uid = m.from_user.id
@@ -630,6 +649,9 @@ Admin: {ADMIN_USERNAME}"""
             else:
                 bot.reply_to(m, "Vazifalar yo'q")
 
+else:
+    bot = None
+
 # ================= FLASK + THREADS =================
 app = Flask(__name__)
 @app.route('/')
@@ -642,24 +664,30 @@ def run_flask():
 
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda...")
-    # Flask thread
     Thread(target=run_flask, daemon=True).start()
+
     if not API_TOKEN:
-        print("❌ Token yo'q, faqat HTTP server ishlaydi")
-        while True: time.sleep(60)
+        print("❌ Token yo'q, faqat HTTP server ishlaydi. Bot ishlamaydi.")
+        while True:
+            time.sleep(60)
     else:
+        print("✅ Token topildi, bot ishga tushirilmoqda...")
         try:
             requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
-        except: pass
-        # oddiy avtoreklama thread (ixtiyoriy)
+        except Exception as e:
+            logger.error(f"Webhook o'chirishda xatolik: {e}")
+
         def auto_ad():
-            while True: time.sleep(86400)
+            while True:
+                time.sleep(86400)
         Thread(target=auto_ad, daemon=True).start()
+
         while True:
             try:
                 bot.infinity_polling(timeout=60, skip_pending=True)
             except KeyboardInterrupt:
+                print("👋 Bot to'xtatildi")
                 break
             except Exception as e:
-                logger.error(f"Xato: {e}")
+                logger.error(f"Polling xatosi: {e}")
                 time.sleep(5)
