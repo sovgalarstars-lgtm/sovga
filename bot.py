@@ -4,7 +4,7 @@ import random
 import logging
 import sqlite3
 import requests
-from threading import Lock, Thread
+from threading import Lock
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import telebot
@@ -638,12 +638,16 @@ def user_cmd(m):
         else:
             bot.reply_to(m, "Vazifalar yo'q")
 
-# ================= ASOSIY ISHGA TUSHIRISH =================
+# ================= ISHGA TUSHIRISH =================
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda (Background Worker)...")
     try:
-        requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
-    except: pass
+        print("Eski webhook o'chirilmoqda...")
+        resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
+        print(f"Webhook o'chirildi: {resp.json()}")
+    except Exception as e:
+        print(f"Webhook o'chirishda xatolik (e'tiborsiz): {e}")
+    time.sleep(3)
     while True:
         try:
             bot.infinity_polling(timeout=60, skip_pending=True)
