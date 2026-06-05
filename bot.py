@@ -26,7 +26,6 @@ TASK_REWARD = 0.20
 if not API_TOKEN:
     print("❌ BOT_TOKEN topilmadi! Iltimos Render Environment Variables ga BOT_TOKEN qo'shing.")
 
-# ================= LOGGING =================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
@@ -101,7 +100,7 @@ class DB:
             );
             """)
             self.conn.commit()
-            # default majburiy kanallar
+            # Default majburiy kanallar
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
@@ -110,7 +109,7 @@ class DB:
                                  (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars"))
                 self.conn.commit()
 
-    # Foydalanuvchi
+    # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
@@ -124,7 +123,7 @@ class DB:
                 return {"successful_invites": row[0] or 0, "stars": float(row[1] or 0), "vip": row[2] or 0, "spent": float(row[3] or 0), "last_daily": row[4], "streak": row[5] or 0, "earned": float(row[6] or 0)}
             return {"successful_invites": 0, "stars": 0.0, "vip": 0, "spent": 0.0, "last_daily": None, "streak": 0, "earned": 0.0}
 
-    # Referal
+    # ---------- Referal ----------
     def add_pending_referral(self, invited_id, inviter_id):
         with lock:
             self.cur.execute("INSERT OR REPLACE INTO pending_referrals(invited_id, inviter_id) VALUES(?,?)", (invited_id, inviter_id))
@@ -156,12 +155,12 @@ class DB:
             self.cur.execute("UPDATE users SET successful_invites = successful_invites + 1 WHERE user_id=?", (uid,))
             self.cur.execute("SELECT successful_invites FROM users WHERE user_id=?", (uid,))
             cnt = self.cur.fetchone()[0]
-            stars = (cnt // 2) * 1   # 2 ta taklif = 1⭐
+            stars = (cnt // 2) * 1      # 2 ta = 1 yulduz
             self.cur.execute("UPDATE users SET stars=?, total_earned=? WHERE user_id=?", (stars, stars, uid))
             self.conn.commit()
             return cnt, stars
 
-    # Yulduzlar
+    # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -213,7 +212,7 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
-    # Boshqa
+    # ---------- Boshqa ----------
     def grant_vip(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
@@ -267,7 +266,7 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
             return s
 
-    # Majburiy kanallar
+    # ---------- Kanallar ----------
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url FROM forced_channels")
@@ -283,7 +282,7 @@ class DB:
             self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
             self.conn.commit()
 
-    # Vazifalar
+    # ---------- Vazifalar ----------
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -372,6 +371,7 @@ def finalize_referral(invited_id):
         db.remove_pending(invited_id)
 
 # ================= BOT HANDLERLAR (agar token mavjud bo'lsa) =================
+bot = None
 if API_TOKEN:
     bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
 
@@ -542,7 +542,7 @@ Admin: {ADMIN_USERNAME}"""
 
         bot.answer_callback_query(call.id)
 
-    # Admin buyruqlar
+    # ----- Admin buyruqlar -----
     @bot.message_handler(commands=["admin"])
     def admin_cmd(m):
         if m.from_user.id != ADMIN_ID: return
@@ -649,10 +649,7 @@ Admin: {ADMIN_USERNAME}"""
             else:
                 bot.reply_to(m, "Vazifalar yo'q")
 
-else:
-    bot = None
-
-# ================= FLASK + THREADS =================
+# ================= FLASK (PORT ochish) =================
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -663,31 +660,33 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    print("🚀 Bot ishga tushirilmoqda...")
-    Thread(target=run_flask, daemon=True).start()
+    print("🚀 Ishga tushirilmoqda...")
 
-    if not API_TOKEN:
-        print("❌ Token yo'q, faqat HTTP server ishlaydi. Bot ishlamaydi.")
-        while True:
-            time.sleep(60)
-    else:
-        print("✅ Token topildi, bot ishga tushirilmoqda...")
+    # Flask serverni non‑daemon thread’da ishga tushiramiz.
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = False  # main thread o'lsa ham yashasin
+    flask_thread.start()
+
+    if API_TOKEN:
+        print("✅ Token topildi, bot polling boshlanmoqda...")
         try:
             requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
-        except Exception as e:
-            logger.error(f"Webhook o'chirishda xatolik: {e}")
+        except: pass
 
-        def auto_ad():
+        # Polling’ni alohida thread’da bajaramiz (xatolik bo‘lsa Flask ishlayveradi)
+        def poll():
             while True:
-                time.sleep(86400)
-        Thread(target=auto_ad, daemon=True).start()
+                try:
+                    bot.infinity_polling(timeout=60, skip_pending=True)
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    logger.error(f"Polling xatosi: {e}")
+                    time.sleep(5)
+        Thread(target=poll, daemon=True).start()
+    else:
+        print("❌ Token yo‘q, faqat HTTP server ishlaydi. Bot ishlamaydi.")
 
-        while True:
-            try:
-                bot.infinity_polling(timeout=60, skip_pending=True)
-            except KeyboardInterrupt:
-                print("👋 Bot to'xtatildi")
-                break
-            except Exception as e:
-                logger.error(f"Polling xatosi: {e}")
-                time.sleep(5)
+    # Main thread cheksiz kutib turadi (Flask thread’i bilan birga)
+    while True:
+        time.sleep(60)
