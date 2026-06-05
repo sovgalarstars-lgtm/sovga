@@ -100,15 +100,12 @@ class DB:
             );
             """)
             self.conn.commit()
-            # Default majburiy kanallar (faqat to'g'ri ID'lar bilan)
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
-                # Guruhni to'g'ri ID bilan qo'shamiz (bot admin bo'lgan guruh)
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
                                  (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars"))
                 self.conn.commit()
 
-    # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
@@ -122,7 +119,6 @@ class DB:
                 return {"successful_invites": row[0] or 0, "stars": float(row[1] or 0), "vip": row[2] or 0, "spent": float(row[3] or 0), "last_daily": row[4], "streak": row[5] or 0, "earned": float(row[6] or 0)}
             return {"successful_invites": 0, "stars": 0.0, "vip": 0, "spent": 0.0, "last_daily": None, "streak": 0, "earned": 0.0}
 
-    # ---------- Referal ----------
     def add_pending_referral(self, invited_id, inviter_id):
         with lock:
             self.cur.execute("INSERT OR REPLACE INTO pending_referrals(invited_id, inviter_id) VALUES(?,?)", (invited_id, inviter_id))
@@ -163,7 +159,6 @@ class DB:
                 earned = 0.0
             new_cnt = old_cnt + 1
             added_stars = 0.0
-            # Har bir juft taklif uchun 1 yulduz berish: faqat oldingi toq bo'lsa va yangi juft bo'lsa
             if new_cnt % 2 == 0 and old_cnt % 2 != 0:
                 added_stars = 1.0
             new_stars = stars + added_stars
@@ -172,7 +167,6 @@ class DB:
             self.conn.commit()
             return new_cnt, new_stars
 
-    # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -224,7 +218,6 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
-    # ---------- Boshqa ----------
     def grant_vip(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
@@ -278,7 +271,6 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
             return s
 
-    # ---------- Kanallar ----------
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT channel_id, channel_username, channel_name, channel_url FROM forced_channels")
@@ -294,7 +286,6 @@ class DB:
             self.cur.execute("DELETE FROM forced_channels WHERE channel_id=?", (channel_id,))
             self.conn.commit()
 
-    # ---------- Vazifalar ----------
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -357,7 +348,6 @@ def check_sub(uid):
         except Exception as e:
             error_msg = str(e)
             if "chat not found" in error_msg.lower():
-                # Kanal topilmadi – avtomatik o'chiramiz
                 logger.warning(f"Kanal topilmadi, o'chirilmoqda: {ch_id} ({name})")
                 db.remove_forced_channel(ch_id)
             else:
@@ -387,7 +377,6 @@ def finalize_referral(invited_id):
         db.add_history(inviter_id, invited_id, name, "link")
         new_cnt, new_stars = db.add_successful_invite(inviter_id)
         db.remove_pending(invited_id)
-        # Taklif qilgan odamga xabar beramiz
         try:
             bot.send_message(inviter_id, f"🎉 Sizning havolangiz orqali {name} qo'shildi! Sizda {new_cnt} ta taklif, {format_stars(new_stars)}⭐")
         except:
