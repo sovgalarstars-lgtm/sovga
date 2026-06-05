@@ -151,13 +151,26 @@ class DB:
 
     def add_successful_invite(self, uid):
         with lock:
-            self.cur.execute("UPDATE users SET successful_invites = successful_invites + 1 WHERE user_id=?", (uid,))
-            self.cur.execute("SELECT successful_invites FROM users WHERE user_id=?", (uid,))
-            cnt = self.cur.fetchone()[0]
-            stars = (cnt // 2) * 1      # 2 ta = 1 yulduz
-            self.cur.execute("UPDATE users SET stars=?, total_earned=? WHERE user_id=?", (stars, stars, uid))
+            self.cur.execute("SELECT successful_invites, stars, total_earned FROM users WHERE user_id=?", (uid,))
+            row = self.cur.fetchone()
+            if row:
+                old_cnt = row[0] or 0
+                stars = float(row[1] or 0)
+                earned = float(row[2] or 0)
+            else:
+                old_cnt = 0
+                stars = 0.0
+                earned = 0.0
+            new_cnt = old_cnt + 1
+            added_stars = 0.0
+            # Har bir juft taklif uchun 1 yulduz berish: faqat oldingi toq bo'lsa va yangi juft bo'lsa
+            if new_cnt % 2 == 0 and old_cnt % 2 != 0:
+                added_stars = 1.0
+            new_stars = stars + added_stars
+            new_earned = earned + added_stars
+            self.cur.execute("UPDATE users SET successful_invites=?, stars=?, total_earned=? WHERE user_id=?", (new_cnt, new_stars, new_earned, uid))
             self.conn.commit()
-            return cnt, stars
+            return new_cnt, new_stars
 
     # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
@@ -349,7 +362,6 @@ def check_sub(uid):
                 db.remove_forced_channel(ch_id)
             else:
                 logger.warning(f"Tekshirib bo'lmadi {ch_id}: {e}")
-            # Xatolik yuz berganda foydalanuvchini bloklamaymiz
     return not_sub
 
 def add_footer(text):
@@ -373,8 +385,13 @@ def finalize_referral(invited_id):
         except:
             name = "User"
         db.add_history(inviter_id, invited_id, name, "link")
-        db.add_successful_invite(inviter_id)
+        new_cnt, new_stars = db.add_successful_invite(inviter_id)
         db.remove_pending(invited_id)
+        # Taklif qilgan odamga xabar beramiz
+        try:
+            bot.send_message(inviter_id, f"🎉 Sizning havolangiz orqali {name} qo'shildi! Sizda {new_cnt} ta taklif, {format_stars(new_stars)}⭐")
+        except:
+            pass
 
 # ================= BOT HANDLERLAR =================
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
