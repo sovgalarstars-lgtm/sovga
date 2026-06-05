@@ -100,11 +100,10 @@ class DB:
             );
             """)
             self.conn.commit()
-            # Default majburiy kanallar
+            # Default majburiy kanallar (faqat to'g'ri ID'lar bilan)
             self.cur.execute("SELECT COUNT(*) FROM forced_channels")
             if self.cur.fetchone()[0] == 0:
-                self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
-                                 (-1003737363661, "@Tekin_stars_yulduz", "📢 KANAL", "https://t.me/Tekin_stars_yulduz"))
+                # Guruhni to'g'ri ID bilan qo'shamiz (bot admin bo'lgan guruh)
                 self.cur.execute("INSERT OR IGNORE INTO forced_channels(channel_id, channel_username, channel_name, channel_url) VALUES(?,?,?,?)",
                                  (-1002449896845, "@Stars_2_odam_1stars", "👥 GURUH", "https://t.me/Stars_2_odam_1stars"))
                 self.conn.commit()
@@ -340,10 +339,17 @@ def check_sub(uid):
     for ch_id, username, name, url in channels:
         try:
             member = bot.get_chat_member(ch_id, uid)
-            if member.status not in ['member','administrator','creator']:
-                not_sub.append({"id":ch_id,"username":username,"name":name,"url":url})
+            if member.status not in ['member', 'administrator', 'creator']:
+                not_sub.append({"id": ch_id, "username": username, "name": name, "url": url})
         except Exception as e:
-            logger.warning(f"Tekshirib bo'lmadi {ch_id}: {e}")
+            error_msg = str(e)
+            if "chat not found" in error_msg.lower():
+                # Kanal topilmadi – avtomatik o'chiramiz
+                logger.warning(f"Kanal topilmadi, o'chirilmoqda: {ch_id} ({name})")
+                db.remove_forced_channel(ch_id)
+            else:
+                logger.warning(f"Tekshirib bo'lmadi {ch_id}: {e}")
+            # Xatolik yuz berganda foydalanuvchini bloklamaymiz
     return not_sub
 
 def add_footer(text):
