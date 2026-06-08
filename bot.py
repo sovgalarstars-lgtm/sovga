@@ -524,8 +524,36 @@ def callback(call):
                     markup.add(types.InlineKeyboardButton(f"🎯 {name} (+{reward}⭐)", callback_data=f"task_{tid}_claim"))
         bot.send_message(call.message.chat.id, "✅ Vazifalar", reply_markup=markup)
     elif data.startswith("task_"):
-        # Vazifalar callback (oldingi kodda bor)
-        pass
+        parts = data.split("_")
+        if len(parts)<3: return
+        tid = int(parts[1])
+        action = parts[2]
+        tasks = db.get_tasks()
+        task = next((t for t in tasks if t[0]==tid), None)
+        if not task:
+            bot.answer_callback_query(call.id, "❌ Topilmadi")
+            return
+        ttype = task[1]; ch_id = task[2]; name = task[4]; reward = task[6]
+        if ttype == 'telegram':
+            try:
+                member = bot.get_chat_member(ch_id, uid)
+                if member.status in ['member','administrator','creator']:
+                    if db.complete_task(uid, tid, reward):
+                        bot.answer_callback_query(call.id, f"✅ +{reward}⭐", show_alert=True)
+                        bot.send_message(call.message.chat.id, f"✅ {name} bajarildi! +{reward}⭐")
+                    else:
+                        bot.answer_callback_query(call.id, "❌ Bajarilgan!", show_alert=True)
+                else:
+                    bot.answer_callback_query(call.id, "❌ Obuna bo'lmagansiz", show_alert=True)
+            except Exception as e:
+                bot.answer_callback_query(call.id, "❌ Tekshirib bo'lmadi", show_alert=True)
+        else:
+            if action == "claim":
+                if db.complete_task(uid, tid, reward):
+                    bot.answer_callback_query(call.id, f"✅ +{reward}⭐", show_alert=True)
+                    bot.send_message(call.message.chat.id, f"✅ {name} bajarildi! +{reward}⭐")
+                else:
+                    bot.answer_callback_query(call.id, "❌ Bajarilgan!", show_alert=True)
     elif data.startswith("buy_"):
         item_id = int(data.split("_")[1])
         item = SHOP.get(item_id)
@@ -550,7 +578,80 @@ Admin: {ADMIN_USERNAME}"""
         except: pass
     bot.answer_callback_query(call.id)
 
-# Admin buyruqlar
+# ================= ADMIN BUYRUG'LARI =================
+@bot.message_handler(commands=["admin"])
+def admin_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    s = db.get_stats()
+    text = f"""🔐 <b>ADMIN PANEL</b>
+👥 Foydalanuvchilar: {s['users']}
+📊 Jami takliflar: {s['total_invites']}
+⭐ Yulduzlar: {format_stars(s['stars'])}
+👑 VIP: {s['vip']}
+💸 Sarflangan: {format_stars(s['spent'])}
+🛍 Xaridlar: {s['purchases']}
+
+<b>Buyruqlar:</b>
+/addstars [id] [miqdor]
+/ban [id]
+/unban [id]
+/broadcast [matn]
+/addchannel [tur] [chat_id] [@] [nomi] [url]
+/removetask [id]
+/tasklist
+/search [id/username]
+"""
+    bot.reply_to(m, text)
+
+@bot.message_handler(commands=["addstars"])
+def addstars(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        _, uid, amt = m.text.split()
+        uid, amt = int(uid), float(amt)
+        db.create_user(uid, None, "User")
+        ns = db.add_stars_admin(uid, amt)
+        bot.reply_to(m, f"✅ {uid} +{amt}⭐, jami {format_stars(ns)}")
+    except:
+        bot.reply_to(m, "❌ /addstars id miqdor")
+
+@bot.message_handler(commands=["ban"])
+def ban_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        uid = int(m.text.split()[1])
+        db.ban_user(uid)
+        bot.reply_to(m, f"✅ {uid} bloklandi")
+    except:
+        bot.reply_to(m, "❌ /ban id")
+
+@bot.message_handler(commands=["unban"])
+def unban_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        uid = int(m.text.split()[1])
+        db.unban_user(uid)
+        bot.reply_to(m, f"✅ {uid} blokdan chiqarildi")
+    except:
+        bot.reply_to(m, "❌ /unban id")
+
+@bot.message_handler(commands=["broadcast"])
+def broadcast(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        text = m.text.split(maxsplit=1)[1]
+        users = db.get_all_users_for_ad()
+        sent = 0
+        for uid in users:
+            try:
+                bot.send_message(uid, f"📢 {text}")
+                sent += 1
+                time.sleep(0.1)
+            except: pass
+        bot.reply_to(m, f"✅ {sent}/{len(users)}")
+    except:
+        bot.reply_to(m, "❌ /broadcast matn")
+
 @bot.message_handler(commands=["addchannel"])
 def addchannel(m):
     if m.from_user.id != ADMIN_ID: return
@@ -572,6 +673,44 @@ def addchannel(m):
     except Exception as e:
         bot.reply_to(m, f"❌ Xato: {e}")
 
+@bot.message_handler(commands=["removetask"])
+def removetask(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        tid = int(m.text.split()[1])
+        db.remove_task(tid)
+        bot.reply_to(m, f"✅ {tid} o'chirildi")
+    except:
+        bot.reply_to(m, "❌ /removetask id")
+
+@bot.message_handler(commands=["tasklist"])
+def tasklist(m):
+    if m.from_user.id != ADMIN_ID: return
+    tasks = db.get_tasks()
+    if tasks:
+        text = "\n".join([f"{t[0]}: {t[1]} {t[4]} +{t[6]}⭐" for t in tasks])
+        bot.reply_to(m, text)
+    else:
+        bot.reply_to(m, "Vazifalar yo'q")
+
+@bot.message_handler(commands=["search"])
+def search_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        query = m.text.split(maxsplit=1)[1]
+        results = db.search_user(query)
+        if results:
+            text = "🔍 Natijalar:\n"
+            for uid, un, nm, inv, st, vip, streak in results[:10]:
+                user = f"@{un}" if un else nm
+                text += f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)} 🔥{streak}\n"
+            bot.reply_to(m, text)
+        else:
+            bot.reply_to(m, "❌ Topilmadi!")
+    except:
+        bot.reply_to(m, "❌ /search [id/username]")
+
+# ================= FOYDALANUVCHI BUYRUG'LARI =================
 @bot.message_handler(commands=["stats"])
 def stats_cmd(m):
     uid = m.from_user.id
@@ -592,6 +731,15 @@ def daily_cmd(m):
 def link_cmd(m):
     bot.reply_to(m, f"🔗 {get_invite_link(m.from_user.id)}")
 
+@bot.message_handler(commands=["tasks"])
+def tasks_cmd(m):
+    tasks = db.get_tasks()
+    if tasks:
+        text = "\n".join([f"{t[4]} +{t[6]}⭐" for t in tasks])
+        bot.reply_to(m, text)
+    else:
+        bot.reply_to(m, "Vazifalar yo'q")
+
 # ================= HTTP SERVER (Port uchun) =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -600,7 +748,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot ishlamoqda")
     def log_message(self, format, *args):
-        pass  # loglarni kamaytirish
+        pass
 
 def run_http_server():
     port = int(os.environ.get("PORT", 10000))
@@ -625,7 +773,7 @@ if __name__ == "__main__":
 
     # HTTP serverni alohida thread'da ishga tushirish
     Thread(target=run_http_server, daemon=True).start()
-    time.sleep(2)  # server to'liq ishga tushishi uchun
+    time.sleep(2)  # server tayyor bo'lishi uchun
 
     while True:
         try:
