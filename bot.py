@@ -582,7 +582,7 @@ def callback(call):
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
 
-            # Admin tugmasi – oddiy tg://user?id orqali
+            # Admin uchun tugma
             profile_link = f"tg://user?id={uid}"
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
