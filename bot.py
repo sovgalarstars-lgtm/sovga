@@ -115,7 +115,6 @@ class DB:
             );
             """)
             self.conn.commit()
-            # Hech qanday default kanal qo'shmaymiz
 
     # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
@@ -337,6 +336,20 @@ class DB:
             self.cur.execute("SELECT task_id FROM user_tasks WHERE user_id=?", (user_id,))
             return [row[0] for row in self.cur.fetchall()]
 
+    # ---------- Qidiruv (admin uchun) ----------
+    def search_user(self, query):
+        with lock:
+            try:
+                q = int(query)
+                self.cur.execute("SELECT user_id, username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE user_id=?", (q,))
+                row = self.cur.fetchone()
+                if row:
+                    return [row]
+            except:
+                pass
+            self.cur.execute("SELECT user_id, username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE username LIKE ? OR first_name LIKE ? LIMIT 10", (f"%{query}%", f"%{query}%"))
+            return self.cur.fetchall()
+
 db = DB()
 
 # ================= SHOP =================
@@ -365,8 +378,7 @@ def check_sub(uid):
                 if member.status not in ['member','administrator','creator']:
                     not_sub.append({"db_id": db_id, "type": ctype, "name": name, "url": url, "username": username})
             except Exception as e:
-                error_msg = str(e)
-                if "chat not found" in error_msg.lower():
+                if "chat not found" in str(e).lower():
                     logger.warning(f"Kanal topilmadi, o'chirilmoqda: {db_id}")
                     db.remove_forced_channel(db_id)
                 else:
@@ -571,15 +583,20 @@ def callback(call):
             db.add_purchase_history(uid, item['name'], item['emoji'], item['price'])
             extra = "\n👑 VIP berildi!" if item['price'] >= 50 else ""
             if item['price'] >= 50: db.grant_vip(uid)
-            admin_link = f"tg://user?id={ADMIN_ID}"
-            caption = f"""✅ Sovg'a berildi!
-{item['emoji']} {item['name']}
-💰 Sarflandi: {item['price']}⭐
-⭐ Qoldi: {format_stars(ns)}{extra}
-Admin: {ADMIN_USERNAME}"""
+            # Foydalanuvchiga tasdiq xabari (admin bilan bog'lanish havolasisiz)
+            caption = f"""✅ <b>Sovg'a berildi!</b>
+
+{item['emoji']} <b>{item['name']}</b>
+💰 Sarflandi: <b>{item['price']}⭐</b>
+⭐ Qoldi: <b>{format_stars(ns)}</b>{extra}
+
+⏳ <b>Admin 24 soat ichida sovg'angizni yuboradi.</b>"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
-            try: bot.send_message(ADMIN_ID, f"🛍 {call.from_user.first_name} ({uid}) {item['name']} {item['price']}⭐")
+            # Admin uchun xabar (foydalanuvchiga havola bilan)
+            admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
+            try:
+                bot.send_message(ADMIN_ID, admin_msg)
             except: pass
         bot.answer_callback_query(call.id)
     except Exception as e:
@@ -797,7 +814,6 @@ if __name__ == "__main__":
         requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=10)
     except: pass
 
-    # HTTP serverni alohida thread'da ishga tushirish
     Thread(target=run_http_server, daemon=True).start()
     time.sleep(2)
 
