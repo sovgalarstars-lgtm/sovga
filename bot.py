@@ -16,6 +16,10 @@ if not API_TOKEN:
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "2010030869"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "stars_sovga_gifbot")
+# @ belgisini olib tashlash
+if BOT_USERNAME.startswith("@"):
+    BOT_USERNAME = BOT_USERNAME[1:]
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@Stars_5_odam_1stars")
 GROUP_ID = -1002449896845
 GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
@@ -375,12 +379,8 @@ def format_stars(stars):
     if stars == int(stars): return str(int(stars))
     return f"{stars:.2f}"
 
+# Faqat ID bilan ishlaydigan havola
 def get_invite_link(uid):
-    try:
-        user_info = bot.get_chat(uid)
-        if user_info.username:
-            return f"https://t.me/{BOT_USERNAME}?start={user_info.username}"
-    except: pass
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
 def finalize_referral(invited_id):
@@ -407,14 +407,13 @@ def start(m):
     try:
         if db.check_ban(uid):
             return bot.send_message(m.chat.id, "❌ Bloklangansiz!")
+        # Havola parametrini olish
         if m.text and len(m.text.split()) > 1:
             param = m.text.split()[1]
             try:
-                ref = int(param)
+                ref = int(param)  # faqat raqam qabul qilinadi
             except:
-                try:
-                    ref = bot.get_chat(param).id
-                except: ref = None
+                ref = None
             if ref and ref != uid and not db.check_duplicate(ref, uid):
                 db.add_pending_referral(uid, ref)
         not_sub = check_sub(uid)
