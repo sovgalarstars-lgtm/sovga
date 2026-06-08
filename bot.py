@@ -26,7 +26,6 @@ GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
-# Ma'lumotlar bazasi fayli (Render disk kerak emas)
 DB_PATH = "/tmp/bot.db"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -379,7 +378,6 @@ def format_stars(stars):
     if stars == int(stars): return str(int(stars))
     return f"{stars:.2f}"
 
-# Faqat ID bilan ishlaydigan havola
 def get_invite_link(uid):
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
@@ -407,11 +405,10 @@ def start(m):
     try:
         if db.check_ban(uid):
             return bot.send_message(m.chat.id, "❌ Bloklangansiz!")
-        # Havola parametrini olish
         if m.text and len(m.text.split()) > 1:
             param = m.text.split()[1]
             try:
-                ref = int(param)  # faqat raqam qabul qilinadi
+                ref = int(param)
             except:
                 ref = None
             if ref and ref != uid and not db.check_duplicate(ref, uid):
@@ -580,16 +577,26 @@ def callback(call):
 ⏳ <b>Admin 24 soat ichida sovg'angizni yuboradi.</b>"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
-            # Admin xabari
+
+            # Admin uchun tugmali xabar
             try:
                 user_info = bot.get_chat(uid)
-                uname = f"@{user_info.username}" if user_info.username else ""
-                user_display = f"{call.from_user.first_name} {uname}".strip()
-                admin_msg = f"🛍 {user_display} (<a href='tg://user?id={uid}'>📞 Yozish</a>) {item['name']} {item['price']}⭐"
+                uname = user_info.username
+                if uname:
+                    profile_link = f"https://t.me/{uname}"
+                    user_display = f"{call.from_user.first_name} (@{uname})"
+                else:
+                    profile_link = f"tg://user?id={uid}"
+                    user_display = call.from_user.first_name
             except:
-                admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>📞 Yozish</a>) {item['name']} {item['price']}⭐"
+                profile_link = f"tg://user?id={uid}"
+                user_display = call.from_user.first_name
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
+            admin_msg = f"🛍 {user_display} {item['name']} {item['price']}⭐"
             try:
-                bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
+                bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup)
             except:
                 logger.error("Admin xabari yuborilmadi. Admin botga /start bosganmi?")
         bot.answer_callback_query(call.id)
@@ -733,7 +740,9 @@ def userlink_cmd(m):
             user_info = bot.get_chat(uid)
             link = f"https://t.me/{user_info.username}" if user_info.username else f"tg://user?id={uid}"
         except: link = f"tg://user?id={uid}"
-        bot.reply_to(m, f"🔗 <a href='{link}'>{uid}</a>", parse_mode="HTML")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔗 Profil", url=link))
+        bot.reply_to(m, f"Foydalanuvchi: {uid}", reply_markup=markup)
     except: bot.reply_to(m, "❌ /userlink [id yoki @username]")
 
 # ================= FOYDALANUVCHI BUYRUG'LARI =================
@@ -794,7 +803,6 @@ def run_http_server():
 # ================= ISHGA TUSHIRISH =================
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda (Web Service)...")
-    # Token tekshiruvi
     try:
         resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/getMe", timeout=10)
         if resp.status_code != 200 or not resp.json().get("ok"):
@@ -802,7 +810,6 @@ if __name__ == "__main__":
         print(f"✅ Token to'g'ri: @{resp.json()['result']['username']}")
     except Exception as e:
         print(f"❌ Token tekshirib bo'lmadi: {e}"); exit(1)
-    # Webhookni o'chirish
     for _ in range(3):
         try:
             requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
