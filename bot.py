@@ -16,7 +16,6 @@ if not API_TOKEN:
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "2010030869"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "stars_sovga_gifbot")
-# @ belgisini olib tashlash
 if BOT_USERNAME.startswith("@"):
     BOT_USERNAME = BOT_USERNAME[1:]
 
@@ -224,7 +223,7 @@ class DB:
 
     def get_top(self, limit=10):
         with lock:
-            self.cur.execute("SELECT username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY successful_invites DESC LIMIT ?", (limit,))
+            self.cur.execute("SELECT user_id, username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY successful_invites DESC LIMIT ?", (limit,))
             return self.cur.fetchall()
 
     def get_purchase_history(self, uid):
@@ -493,8 +492,13 @@ def callback(call):
             top = db.get_top(10)
             if top:
                 text = "🏆 TOP 10:\n"
-                for i,(un,nm,inv,st,v,streak) in enumerate(top,1):
-                    user = f"@{un}" if un else nm
+                for i, (top_uid, un, nm, inv, st, v, streak) in enumerate(top, 1):
+                    if un:
+                        user = f"@{un}"
+                    elif nm:
+                        user = nm
+                    else:
+                        user = f"ID:{top_uid}"
                     medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
                     vip = "👑" if v else ""
                     text += f"{medal} {user} {vip} - {inv} taklif, {format_stars(st)}⭐\n"
@@ -578,23 +582,11 @@ def callback(call):
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
 
-            # Admin uchun tugmali xabar
-            try:
-                user_info = bot.get_chat(uid)
-                uname = user_info.username
-                if uname:
-                    profile_link = f"https://t.me/{uname}"
-                    user_display = f"{call.from_user.first_name} (@{uname})"
-                else:
-                    profile_link = f"tg://user?id={uid}"
-                    user_display = call.from_user.first_name
-            except:
-                profile_link = f"tg://user?id={uid}"
-                user_display = call.from_user.first_name
-
+            # Admin tugmasi – oddiy tg://user?id orqali
+            profile_link = f"tg://user?id={uid}"
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
-            admin_msg = f"🛍 {user_display} {item['name']} {item['price']}⭐"
+            admin_msg = f"🛍 {call.from_user.first_name} {item['name']} {item['price']}⭐"
             try:
                 bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup)
             except:
@@ -736,12 +728,9 @@ def userlink_cmd(m):
             if results: uid = results[0][0]
             else:
                 bot.reply_to(m, "❌ Topilmadi!"); return
-        try:
-            user_info = bot.get_chat(uid)
-            link = f"https://t.me/{user_info.username}" if user_info.username else f"tg://user?id={uid}"
-        except: link = f"tg://user?id={uid}"
+        profile_link = f"tg://user?id={uid}"
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔗 Profil", url=link))
+        markup.add(types.InlineKeyboardButton("🔗 Profil", url=profile_link))
         bot.reply_to(m, f"Foydalanuvchi: {uid}", reply_markup=markup)
     except: bot.reply_to(m, "❌ /userlink [id yoki @username]")
 
