@@ -434,10 +434,8 @@ def start(m):
             try:
                 ref = int(param)
             except:
-                # username bo'yicha qidirish
-                # Eng oddiy yo'l: get_chat orqali username ni tekshirish
                 try:
-                    user = bot.get_chat(param)  # param @username bo'lsa, user obyekti qaytadi
+                    user = bot.get_chat(param)
                     ref = user.id
                 except:
                     ref = None
@@ -533,7 +531,6 @@ def callback(call):
         elif data == "profile":
             u = db.get(uid)
             vip = "✅" if u['vip'] else "❌"
-            # username olish
             try:
                 user_info = bot.get_chat(uid)
                 username = f"@{user_info.username}" if user_info.username else "🚫 username yo'q"
@@ -612,15 +609,16 @@ def callback(call):
 ⏳ <b>Admin 24 soat ichida sovg'angizni yuboradi.</b>"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
-            # Admin uchun xabar (username qo'shib)
+            # Admin uchun aniq havola bilan xabar
             try:
                 user_info = bot.get_chat(uid)
                 uname = f"@{user_info.username}" if user_info.username else ""
-                admin_msg = f"🛍 {call.from_user.first_name} {uname} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
+                user_display = f"{call.from_user.first_name} {uname}".strip()
+                admin_msg = f"🛍 {user_display} (<a href='tg://user?id={uid}'>📞 Yozish</a>) {item['name']} {item['price']}⭐"
             except:
-                admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
+                admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>📞 Yozish</a>) {item['name']} {item['price']}⭐"
             try:
-                bot.send_message(ADMIN_ID, admin_msg)
+                bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
             except:
                 logger.error("Admin xabari yuborilmadi. Admin botga /start bosganmi?")
         bot.answer_callback_query(call.id)
@@ -662,18 +660,24 @@ def userlink_cmd(m):
     if m.from_user.id != ADMIN_ID: return
     try:
         query = m.text.split(maxsplit=1)[1]
-        # username yoki ID bo'lishi mumkin
         try:
             uid = int(query)
         except:
-            # username bo'yicha qidirish
             results = db.search_user(query)
             if results:
-                uid = results[0][0]  # birinchi natijaning user_id
+                uid = results[0][0]
             else:
                 bot.reply_to(m, "❌ Foydalanuvchi topilmadi!")
                 return
-        link = f"tg://user?id={uid}"
+        # Havola tayyorlash
+        try:
+            user_info = bot.get_chat(uid)
+            if user_info.username:
+                link = f"https://t.me/{user_info.username}"
+            else:
+                link = f"tg://user?id={uid}"
+        except:
+            link = f"tg://user?id={uid}"
         bot.reply_to(m, f"🔗 <a href='{link}'>{uid}</a>", parse_mode="HTML")
     except:
         bot.reply_to(m, "❌ /userlink [id yoki @username]")
