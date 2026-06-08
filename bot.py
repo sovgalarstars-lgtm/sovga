@@ -8,6 +8,7 @@ from telebot import types
 
 load_dotenv()
 
+# ================= CONFIG =================
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     print("❌ BOT_TOKEN topilmadi!")
@@ -21,31 +22,98 @@ GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
+# Ma'lumotlar bazasi fayli (Render disk kerak emas)
+DB_PATH = "/tmp/bot.db"
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
 lock = Lock()
 
+# ================= DATABASE =================
 class DB:
     def __init__(self):
-        self.conn = sqlite3.connect("/tmp/bot.db", check_same_thread=False)
+        self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self.cur = self.conn.cursor()
         self.init()
 
     def init(self):
         with lock:
             self.cur.executescript("""
-            CREATE TABLE IF NOT EXISTS users(user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, successful_invites INTEGER DEFAULT 0, stars REAL DEFAULT 0, vip INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0, last_daily TIMESTAMP, daily_streak INTEGER DEFAULT 0, total_spent REAL DEFAULT 0, total_earned REAL DEFAULT 0);
-            CREATE TABLE IF NOT EXISTS invite_history(id INTEGER PRIMARY KEY AUTOINCREMENT, inviter_id INTEGER, invited_id INTEGER, invited_name TEXT, source TEXT DEFAULT 'link', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-            CREATE TABLE IF NOT EXISTS forced_channels(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_type TEXT DEFAULT 'telegram', channel_id INTEGER, channel_username TEXT, channel_name TEXT, channel_url TEXT);
-            CREATE TABLE IF NOT EXISTS user_forced(user_id INTEGER, channel_id INTEGER, completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, channel_id));
-            CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, task_type TEXT DEFAULT 'telegram', channel_id INTEGER, channel_username TEXT, channel_name TEXT, channel_url TEXT, reward REAL DEFAULT 0.20);
-            CREATE TABLE IF NOT EXISTS user_tasks(user_id INTEGER, task_id INTEGER, completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, task_id));
-            CREATE TABLE IF NOT EXISTS pending_referrals(invited_id INTEGER PRIMARY KEY, inviter_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-            CREATE TABLE IF NOT EXISTS purchase_history(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, item_name TEXT, item_emoji TEXT, price REAL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS users(
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                successful_invites INTEGER DEFAULT 0,
+                stars REAL DEFAULT 0,
+                vip INTEGER DEFAULT 0,
+                is_banned INTEGER DEFAULT 0,
+                last_daily TIMESTAMP,
+                daily_streak INTEGER DEFAULT 0,
+                total_spent REAL DEFAULT 0,
+                total_earned REAL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS invite_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inviter_id INTEGER,
+                invited_id INTEGER,
+                invited_name TEXT,
+                source TEXT DEFAULT 'link',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS forced_channels(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_type TEXT DEFAULT 'telegram',
+                channel_id INTEGER,
+                channel_username TEXT,
+                channel_name TEXT,
+                channel_url TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS user_forced(
+                user_id INTEGER,
+                channel_id INTEGER,
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, channel_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS tasks(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT DEFAULT 'telegram',
+                channel_id INTEGER,
+                channel_username TEXT,
+                channel_name TEXT,
+                channel_url TEXT,
+                reward REAL DEFAULT 0.20
+            );
+
+            CREATE TABLE IF NOT EXISTS user_tasks(
+                user_id INTEGER,
+                task_id INTEGER,
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, task_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS pending_referrals(
+                invited_id INTEGER PRIMARY KEY,
+                inviter_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS purchase_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                item_name TEXT,
+                item_emoji TEXT,
+                price REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             """)
             self.conn.commit()
 
+    # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
@@ -59,6 +127,7 @@ class DB:
                 return {"successful_invites": row[0] or 0, "stars": float(row[1] or 0), "vip": row[2] or 0, "spent": float(row[3] or 0), "last_daily": row[4], "streak": row[5] or 0, "earned": float(row[6] or 0)}
             return {"successful_invites": 0, "stars": 0.0, "vip": 0, "spent": 0.0, "last_daily": None, "streak": 0, "earned": 0.0}
 
+    # ---------- Referal ----------
     def add_pending_referral(self, invited_id, inviter_id):
         with lock:
             self.cur.execute("INSERT OR REPLACE INTO pending_referrals(invited_id, inviter_id) VALUES(?,?)", (invited_id, inviter_id))
@@ -103,6 +172,7 @@ class DB:
             self.conn.commit()
             return new_cnt, new_stars
 
+    # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -145,6 +215,7 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
+    # ---------- Boshqa ----------
     def grant_vip(self, uid):
         with lock: self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,)); self.conn.commit()
 
@@ -192,6 +263,7 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM purchase_history"); s["purchases"] = self.cur.fetchone()[0]
             return s
 
+    # ---------- Majburiy kanallar ----------
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT id, channel_type, channel_id, channel_username, channel_name, channel_url FROM forced_channels")
@@ -213,6 +285,7 @@ class DB:
     def complete_forced(self, uid, db_id):
         with lock: self.cur.execute("INSERT OR IGNORE INTO user_forced(user_id, channel_id) VALUES(?,?)", (uid, db_id)); self.conn.commit()
 
+    # ---------- Vazifalar ----------
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -244,6 +317,7 @@ class DB:
             self.cur.execute("SELECT task_id FROM user_tasks WHERE user_id=?", (uid,))
             return [r[0] for r in self.cur.fetchall()]
 
+    # ---------- Qidiruv (admin) ----------
     def search_user(self, query):
         with lock:
             try:
@@ -257,6 +331,7 @@ class DB:
 
 db = DB()
 
+# ================= SHOP =================
 SHOP = {
     1: {"price":15,"name":"❤️ Pushti Yurakcha","emoji":"❤️","photo":"https://i.imgur.com/8Yp9Z2M.jpg","desc":"Chiroyli pushti yurak"},
     2: {"price":15,"name":"🧸 Ayiqcha","emoji":"🧸","photo":"https://i.imgur.com/5f2vL8K.jpg","desc":"Yoqimli ayiqcha"},
@@ -270,6 +345,7 @@ SHOP = {
     10:{"price":500,"name":"👑 Qirol toji","emoji":"👑","photo":"https://i.imgur.com/XkP5vRt.jpg","desc":"Haqiqiy toj + VIP"},
 }
 
+# ================= YORDAMCHI =================
 def check_sub(uid):
     channels = db.get_forced_channels()
     not_sub = []
@@ -322,6 +398,7 @@ def finalize_referral(invited_id):
             bot.send_message(inviter_id, f"🎉 Sizning havolangiz orqali {name} qo'shildi! Sizda {new_cnt} ta taklif, {format_stars(new_stars)}⭐")
         except: pass
 
+# ================= BOT HANDLERLAR =================
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
 
 @bot.message_handler(commands=["start"])
@@ -368,7 +445,7 @@ def start(m):
         bot.send_message(m.chat.id, add_footer(text), reply_markup=markup)
     except Exception as e:
         logger.error(f"/start xatosi: {e}", exc_info=True)
-        bot.send_message(m.chat.id, "❌ Kechirasiz, xatolik yuz berdi. Iltimos qaytadan urinib ko'ring.")
+        bot.send_message(m.chat.id, "❌ Kechirasiz, xatolik yuz berdi. Qaytadan urinib ko'ring.")
 
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
@@ -377,8 +454,7 @@ def callback(call):
     try:
         if data.startswith("forcesub_"):
             parts = data.split("_")
-            action = parts[1]
-            db_id = int(parts[2])
+            action = parts[1]; db_id = int(parts[2])
             if action == "telegram":
                 ch = db.get_forced_channels()
                 target = next((c for c in ch if c[0] == db_id), None)
@@ -458,13 +534,11 @@ def callback(call):
         elif data.startswith("task_"):
             parts = data.split("_")
             if len(parts)<3: return
-            tid = int(parts[1])
-            action = parts[2]
+            tid = int(parts[1]); action = parts[2]
             tasks = db.get_tasks()
             task = next((t for t in tasks if t[0]==tid), None)
             if not task:
-                bot.answer_callback_query(call.id, "❌ Topilmadi")
-                return
+                bot.answer_callback_query(call.id, "❌ Topilmadi"); return
             ttype = task[1]; ch_id = task[2]; name = task[4]; reward = task[6]
             if ttype == 'telegram':
                 try:
@@ -524,7 +598,7 @@ def callback(call):
         logger.error(f"Callback xatosi: {e}", exc_info=True)
         bot.answer_callback_query(call.id, f"❌ Xatolik: {e}", show_alert=True)
 
-# Admin buyruqlar (qisqartirildi, lekin avvalgi versiyadagi barcha buyruqlarni o'z ichiga oladi)
+# ================= ADMIN BUYRUG'LARI =================
 @bot.message_handler(commands=["admin"])
 def admin_cmd(m):
     if m.from_user.id != ADMIN_ID: return
@@ -547,6 +621,104 @@ def admin_cmd(m):
 /userlink [id yoki @username]"""
     bot.reply_to(m, text)
 
+@bot.message_handler(commands=["addstars"])
+def addstars(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        parts = m.text.split()
+        if len(parts) < 3:
+            bot.reply_to(m, "❌ /addstars [id] [miqdor]"); return
+        uid = int(parts[1]); amount = float(parts[2])
+        db.create_user(uid, None, "User")
+        new_balance = db.add_stars_admin(uid, amount)
+        bot.reply_to(m, f"✅ {uid} ga +{format_stars(amount)}⭐ qo'shildi. Jami: {format_stars(new_balance)}⭐")
+    except Exception as e:
+        bot.reply_to(m, f"❌ Xato: {e}")
+
+@bot.message_handler(commands=["ban"])
+def ban_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        uid = int(m.text.split()[1])
+        db.ban_user(uid)
+        bot.reply_to(m, f"✅ {uid} bloklandi")
+    except: bot.reply_to(m, "❌ /ban [id]")
+
+@bot.message_handler(commands=["unban"])
+def unban_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        uid = int(m.text.split()[1])
+        db.unban_user(uid)
+        bot.reply_to(m, f"✅ {uid} blokdan chiqarildi")
+    except: bot.reply_to(m, "❌ /unban [id]")
+
+@bot.message_handler(commands=["broadcast"])
+def broadcast(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        text = m.text.split(maxsplit=1)[1]
+        users = db.get_all_users_for_ad()
+        sent = 0
+        for uid in users:
+            try:
+                bot.send_message(uid, f"📢 {text}")
+                sent += 1
+                time.sleep(0.1)
+            except: pass
+        bot.reply_to(m, f"✅ {sent}/{len(users)}")
+    except: bot.reply_to(m, "❌ /broadcast [matn]")
+
+@bot.message_handler(commands=["addchannel"])
+def addchannel(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        parts = m.text.split(maxsplit=5)
+        if len(parts) < 6:
+            bot.reply_to(m, "❌ /addchannel [tur] [chat_id yoki 0] [@] [nomi] [url]\nMasalan:\n/addchannel telegram -100123 @kanal Kanal https://t.me/kanal")
+            return
+        ctype = parts[1].lower()
+        if ctype not in ('telegram','instagram','youtube'):
+            bot.reply_to(m, "❌ Noto'g'ri tur. telegram/instagram/youtube"); return
+        ch_id = int(parts[2]); uname = parts[3]; name = parts[4]; url = parts[5]
+        db.add_forced_channel(ctype, ch_id, uname, name, url)
+        bot.reply_to(m, f"✅ Majburiy obuna qo'shildi: {name} ({ctype})")
+    except Exception as e:
+        bot.reply_to(m, f"❌ Xato: {e}")
+
+@bot.message_handler(commands=["removetask"])
+def removetask(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        tid = int(m.text.split()[1])
+        db.remove_task(tid)
+        bot.reply_to(m, f"✅ {tid} o'chirildi")
+    except: bot.reply_to(m, "❌ /removetask [id]")
+
+@bot.message_handler(commands=["tasklist"])
+def tasklist(m):
+    if m.from_user.id != ADMIN_ID: return
+    tasks = db.get_tasks()
+    if tasks:
+        text = "\n".join([f"{t[0]}: {t[1]} {t[4]} +{t[6]}⭐" for t in tasks])
+        bot.reply_to(m, text)
+    else: bot.reply_to(m, "Vazifalar yo'q")
+
+@bot.message_handler(commands=["search"])
+def search_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        query = m.text.split(maxsplit=1)[1]
+        results = db.search_user(query)
+        if results:
+            text = "🔍 Natijalar:\n"
+            for uid, un, nm, inv, st, vip, streak in results[:10]:
+                user = f"@{un}" if un else nm
+                text += f"🆔{uid} {user} {'👑' if vip else ''} 👥{inv} ⭐{format_stars(st)} 🔥{streak}\n"
+            bot.reply_to(m, text)
+        else: bot.reply_to(m, "❌ Topilmadi!")
+    except: bot.reply_to(m, "❌ /search [id/username]")
+
 @bot.message_handler(commands=["userlink"])
 def userlink_cmd(m):
     if m.from_user.id != ADMIN_ID: return
@@ -565,9 +737,47 @@ def userlink_cmd(m):
         bot.reply_to(m, f"🔗 <a href='{link}'>{uid}</a>", parse_mode="HTML")
     except: bot.reply_to(m, "❌ /userlink [id yoki @username]")
 
-# Qolgan admin va foydalanuvchi handlerlari avvalgi to'liq kod bilan bir xil. Ularni o'sha yerdan nusxalab oling.
-# ...
+# ================= FOYDALANUVCHI BUYRUG'LARI =================
+@bot.message_handler(commands=["stats"])
+def stats_cmd(m):
+    uid = m.from_user.id
+    try:
+        u = db.get(uid)
+        total_users = db.get_stats()["users"]
+        vip_status = "✅ HA" if u["vip"] else "❌ YO'Q"
+        text = f"📊 <b>Sizning statistikangiz</b>\n👥 Takliflar: {u['successful_invites']}\n⭐ Yulduzlar: {format_stars(u['stars'])}\n👑 VIP: {vip_status}\n🔥 Streak: {u['streak']} kun\n\n🌐 <b>Botda jami foydalanuvchilar:</b> {total_users}"
+        bot.reply_to(m, add_footer(text))
+    except Exception as e:
+        bot.reply_to(m, f"❌ Xatolik: {e}")
 
+@bot.message_handler(commands=["daily"])
+def daily_cmd(m):
+    uid = m.from_user.id
+    try:
+        ok, ns, bonus, streak, extra = db.give_daily_bonus(uid)
+        if ok: bot.reply_to(m, add_footer(f"🎁 +{bonus}⭐ | Jami: {format_stars(ns)}⭐ | 🔥 Streak: {streak}"))
+        else: bot.reply_to(m, "❌ Bugun olgansiz!")
+    except Exception as e:
+        bot.reply_to(m, f"❌ Xatolik: {e}")
+
+@bot.message_handler(commands=["link"])
+def link_cmd(m):
+    try:
+        bot.reply_to(m, f"🔗 {get_invite_link(m.from_user.id)}")
+    except:
+        bot.reply_to(m, "❌ Xatolik yuz berdi.")
+
+@bot.message_handler(commands=["tasks"])
+def tasks_cmd(m):
+    try:
+        tasks = db.get_tasks()
+        if tasks:
+            text = "\n".join([f"{t[4]} +{t[6]}⭐" for t in tasks])
+            bot.reply_to(m, text)
+        else: bot.reply_to(m, "Vazifalar yo'q")
+    except: bot.reply_to(m, "❌ Xatolik yuz berdi.")
+
+# ================= HTTP SERVER (Port uchun) =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -582,8 +792,9 @@ def run_http_server():
     print(f"🌐 HTTP server {port} portda ishga tushdi")
     server.serve_forever()
 
+# ================= ISHGA TUSHIRISH =================
 if __name__ == "__main__":
-    print("🚀 Bot ishga tushirilmoqda...")
+    print("🚀 Bot ishga tushirilmoqda (Web Service)...")
     # Token tekshiruvi
     try:
         resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/getMe", timeout=10)
