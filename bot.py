@@ -397,6 +397,12 @@ def format_stars(stars):
     return f"{stars:.2f}"
 
 def get_invite_link(uid):
+    try:
+        user_info = bot.get_chat(uid)
+        if user_info.username:
+            return f"https://t.me/{BOT_USERNAME}?start={user_info.username}"
+    except:
+        pass
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
 def finalize_referral(invited_id):
@@ -424,11 +430,19 @@ def start(m):
         if db.check_ban(uid):
             return bot.send_message(m.chat.id, "❌ Bloklangansiz!")
         if m.text and len(m.text.split()) > 1:
+            param = m.text.split()[1]
             try:
-                ref = int(m.text.split()[1])
-                if ref != uid and not db.check_duplicate(ref, uid):
-                    db.add_pending_referral(uid, ref)
-            except: pass
+                ref = int(param)
+            except:
+                # username bo'yicha qidirish
+                # Eng oddiy yo'l: get_chat orqali username ni tekshirish
+                try:
+                    user = bot.get_chat(param)  # param @username bo'lsa, user obyekti qaytadi
+                    ref = user.id
+                except:
+                    ref = None
+            if ref and ref != uid and not db.check_duplicate(ref, uid):
+                db.add_pending_referral(uid, ref)
         not_sub = check_sub(uid)
         if not_sub:
             markup = types.InlineKeyboardMarkup(row_width=1)
@@ -519,7 +533,13 @@ def callback(call):
         elif data == "profile":
             u = db.get(uid)
             vip = "✅" if u['vip'] else "❌"
-            bot.send_message(call.message.chat.id, add_footer(f"📊 Profil\n👤 {call.from_user.first_name}\n🆔 {uid}\n👑 VIP: {vip}\n🔥 Streak: {u['streak']}\n👥 Takliflar: {u['successful_invites']}\n⭐ Yulduz: {format_stars(u['stars'])}"))
+            # username olish
+            try:
+                user_info = bot.get_chat(uid)
+                username = f"@{user_info.username}" if user_info.username else "🚫 username yo'q"
+            except:
+                username = "🚫 username yo'q"
+            bot.send_message(call.message.chat.id, add_footer(f"📊 Profil\n👤 {call.from_user.first_name}\n🆔 {uid}\n📛 {username}\n👑 VIP: {vip}\n🔥 Streak: {u['streak']}\n👥 Takliflar: {u['successful_invites']}\n⭐ Yulduz: {format_stars(u['stars'])}"))
         elif data == "link":
             link = get_invite_link(uid)
             bot.send_message(call.message.chat.id, add_footer(f"🔗 {link}"))
@@ -583,7 +603,6 @@ def callback(call):
             db.add_purchase_history(uid, item['name'], item['emoji'], item['price'])
             extra = "\n👑 VIP berildi!" if item['price'] >= 50 else ""
             if item['price'] >= 50: db.grant_vip(uid)
-            # Foydalanuvchiga tasdiq xabari (admin bilan bog'lanish havolasisiz)
             caption = f"""✅ <b>Sovg'a berildi!</b>
 
 {item['emoji']} <b>{item['name']}</b>
@@ -593,11 +612,17 @@ def callback(call):
 ⏳ <b>Admin 24 soat ichida sovg'angizni yuboradi.</b>"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
-            # Admin uchun xabar (foydalanuvchiga havola bilan)
-            admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
+            # Admin uchun xabar (username qo'shib)
+            try:
+                user_info = bot.get_chat(uid)
+                uname = f"@{user_info.username}" if user_info.username else ""
+                admin_msg = f"🛍 {call.from_user.first_name} {uname} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
+            except:
+                admin_msg = f"🛍 {call.from_user.first_name} (<a href='tg://user?id={uid}'>{uid}</a>) {item['name']} {item['price']}⭐"
             try:
                 bot.send_message(ADMIN_ID, admin_msg)
-            except: pass
+            except:
+                logger.error("Admin xabari yuborilmadi. Admin botga /start bosganmi?")
         bot.answer_callback_query(call.id)
     except Exception as e:
         logger.error(f"Callback xatosi: {e}")
@@ -626,10 +651,32 @@ def admin_cmd(m):
 /removetask [id]
 /tasklist
 /search [id/username]
+/userlink [id yoki @username]
 """
         bot.reply_to(m, text)
     except Exception as e:
         bot.reply_to(m, f"❌ Xato: {e}")
+
+@bot.message_handler(commands=["userlink"])
+def userlink_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        query = m.text.split(maxsplit=1)[1]
+        # username yoki ID bo'lishi mumkin
+        try:
+            uid = int(query)
+        except:
+            # username bo'yicha qidirish
+            results = db.search_user(query)
+            if results:
+                uid = results[0][0]  # birinchi natijaning user_id
+            else:
+                bot.reply_to(m, "❌ Foydalanuvchi topilmadi!")
+                return
+        link = f"tg://user?id={uid}"
+        bot.reply_to(m, f"🔗 <a href='{link}'>{uid}</a>", parse_mode="HTML")
+    except:
+        bot.reply_to(m, "❌ /userlink [id yoki @username]")
 
 @bot.message_handler(commands=["addstars"])
 def addstars(m):
