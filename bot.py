@@ -1,47 +1,49 @@
-import telebot
-import sqlite3
-import logging
 import os
 import time
 import random
+import logging
+import sqlite3
 import requests
-from telebot import types
-from datetime import datetime, timedelta
 from threading import Lock, Thread
+from datetime import datetime, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
+import telebot
+from telebot import types
 
-# ================= CONFIG =================
 load_dotenv()
 
+# ================= KONFIGURATSIYA =================
 API_TOKEN = os.getenv("BOT_TOKEN")
+if not API_TOKEN:
+    print("❌ BOT_TOKEN topilmadi!")
+    exit(1)
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "2010030869"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "stars_sovga_gifbot")
+if BOT_USERNAME.startswith("@"):
+    BOT_USERNAME = BOT_USERNAME[1:]
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@Stars_5_odam_1stars")
+GROUP_ID = -1002449896845
+GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
+DAILY_BONUS = 0.20
+TASK_REWARD = 0.20
 
 YOUTUBE_LINK = os.getenv("YOUTUBE_LINK", "https://youtube.com/@example")
 INSTAGRAM_LINK = os.getenv("INSTAGRAM_LINK", "https://instagram.com/example")
 
-if not API_TOKEN:
-    print("❌ TOKEN topilmadi!")
-    exit(1)
-
-# ================= SOZLAMALAR =================
 REQUIRED_CHANNELS = [
     {"id": -1003737363661, "username": "@Tekin_stars_yulduz", "url": "https://t.me/Tekin_stars_yulduz", "name": "📢 KANAL"},
     {"id": -1002449896845, "username": "@Stars_2_odam_1stars", "url": "https://t.me/Stars_2_odam_1stars", "name": "👥 GURUH"}
 ]
-GROUP_ID = -1002449896845
-GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
-DAILY_BONUS = 0.20
 
-# ================= REKLAMA VA MOTIVATSIYA =================
-ADS_BOT = "@zurnavolarbot"
 ADS_MESSAGES = [
-    f"🎵 {ADS_BOT} - Eng zo'r musiqa boti!",
-    f"🔥 {ADS_BOT} - Sevimli qo'shiqlaringiz!",
-    f"🎶 {ADS_BOT} - Musiqa dunyosi!",
-    f"💃 {ADS_BOT} - Raqsga tushing!",
-    f"🎧 {ADS_BOT} - Hit qo'shiqlar!"
+    "🎵 @zurnavolarbot - Eng zo'r musiqa boti!",
+    "🔥 @zurnavolarbot - Sevimli qo'shiqlaringiz!",
+    "🎶 @zurnavolarbot - Musiqa dunyosi!",
+    "💃 @zurnavolarbot - Raqsga tushing!",
+    "🎧 @zurnavolarbot - Hit qo'shiqlar!"
 ]
 
 MOTIVATIONS = [
@@ -64,7 +66,6 @@ GIFT_ADS = [
     {"emoji": "🎁", "name": "Sovg'a qutisi", "desc": "Sirli sovg'a!", "photo": "https://i.imgur.com/3vX9pLm.jpg"},
 ]
 
-# ================= TASKLAR =================
 TASKS = [
     {"id": "channel1", "type": "telegram", "name": "📢 Kanalga obuna bo'ling", "link": "https://t.me/Tekin_stars_yulduz", "channel_id": -1003737363661, "reward": 0.20},
     {"id": "channel2", "type": "telegram", "name": "👥 Guruhga obuna bo'ling", "link": "https://t.me/Stars_2_odam_1stars", "channel_id": -1002449896845, "reward": 0.20},
@@ -79,7 +80,7 @@ logger = logging.getLogger("BOT")
 
 # ================= DATABASE =================
 lock = Lock()
-pending_verifications = {}  # {user_id: {task_id: timestamp}}
+pending_verifications = {}
 
 class DB:
     def __init__(self):
@@ -260,16 +261,6 @@ class DB:
             self.cur.execute("SELECT username, first_name, invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY invites DESC LIMIT ?", (limit,))
             return self.cur.fetchall()
 
-    def get_top_streak(self, limit=10):
-        with lock:
-            self.cur.execute("SELECT username, first_name, daily_streak, stars FROM users WHERE is_banned=0 AND daily_streak>0 ORDER BY daily_streak DESC LIMIT ?", (limit,))
-            return self.cur.fetchall()
-
-    def get_history(self, uid):
-        with lock:
-            self.cur.execute("SELECT invited_id, invited_name, source, created_at FROM invite_history WHERE inviter_id=? ORDER BY created_at DESC LIMIT 10", (uid,))
-            return self.cur.fetchall()
-
     def get_purchase_history(self, uid):
         with lock:
             self.cur.execute("SELECT item_name, item_emoji, price, created_at FROM purchase_history WHERE user_id=? ORDER BY created_at DESC LIMIT 10", (uid,))
@@ -393,7 +384,6 @@ def get_invite_link(uid):
     return f"https://t.me/{BOT_USERNAME}?start={uid}"
 
 def process_referral(invited_id):
-    """Taklif qilingan foydalanuvchi obunani to'liq bajarganidan keyin chaqiriladi"""
     pending = db.get_pending_invite(invited_id)
     if pending:
         inviter_id, source = pending
@@ -402,14 +392,13 @@ def process_referral(invited_id):
             db.add_invite(inviter_id)
         db.remove_pending_invite(invited_id)
 
-# ================= START =================
+# ================= HANDLERS =================
 @bot.message_handler(commands=["start"])
 def start(m):
     uid = m.from_user.id
     if db.check_ban(uid):
         return bot.send_message(m.chat.id, "❌ Bloklangansiz!")
 
-    # Referal parametrni saqlash
     if m.text and len(m.text.split()) > 1:
         try:
             ref = int(m.text.split()[1])
@@ -428,8 +417,6 @@ def start(m):
         return bot.send_message(m.chat.id, f"❌ Obuna bo'ling:\n\n{channels}", reply_markup=markup)
 
     db.create_user(uid, m.from_user.username, m.from_user.first_name)
-
-    # Referalni tekshirish (agar obuna bo'lgan bo'lsa)
     process_referral(uid)
 
     u = db.get(uid)
@@ -454,7 +441,6 @@ def start(m):
 """
     bot.send_message(m.chat.id, add_footer(text), reply_markup=markup)
 
-# ================= GURUHGA QO'SHISH (faqat pending) =================
 @bot.message_handler(content_types=['new_chat_members'])
 def new_members(message):
     if message.chat.id != GROUP_ID:
@@ -467,7 +453,6 @@ def new_members(message):
         invited_id = member.id
         if inviter_id == invited_id:
             continue
-        # Taklifni faqat saqlaymiz, hozir hisoblamaymiz
         db.add_pending_invite(inviter_id, invited_id, "group")
 
     try:
@@ -475,7 +460,6 @@ def new_members(message):
     except:
         pass
 
-# ================= CALLBACK =================
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
     uid = call.from_user.id
@@ -487,7 +471,6 @@ def callback(call):
             bot.answer_callback_query(call.id, "❌ Obuna bo'ling!", show_alert=True)
         else:
             db.create_user(uid, call.from_user.username, call.from_user.first_name)
-            # Obuna bo'lgach, referalni hisobga olish
             process_referral(uid)
             try:
                 bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -580,7 +563,6 @@ def callback(call):
             bot.answer_callback_query(call.id, "❌ Bu vazifa allaqachon bajarilgan!", show_alert=True)
             return
         if task["type"] == "telegram":
-            # Telegram kanaliga obunani tekshirish
             channel_id = task["channel_id"]
             try:
                 member = bot.get_chat_member(channel_id, uid)
@@ -597,7 +579,6 @@ def callback(call):
             except:
                 bot.send_message(call.message.chat.id, "❌ Kanalni tekshirishda xatolik.")
         else:
-            # Tashqi link (YouTube/Instagram)
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("🔗 Linkni ochish", url=task['link']))
             markup.add(types.InlineKeyboardButton("✅ Obuna bo'ldim", callback_data=f"confirm_external_{task_id}"))
@@ -611,7 +592,6 @@ def callback(call):
         if db.is_task_completed(uid, task_id):
             bot.answer_callback_query(call.id, "❌ Vazifa allaqachon bajarilgan!", show_alert=True)
             return
-        # Vaqtni saqlash
         pending_verifications[uid] = {task_id: datetime.now()}
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"verify_external_{task_id}"))
@@ -679,17 +659,22 @@ def callback(call):
             bot.send_photo(call.message.chat.id, item['photo'], caption=add_footer(caption))
             bot.answer_callback_query(call.id, "✅ Berildi!", show_alert=True)
 
-            # Guruhga e'lon (faqat guruhga, kanalga emas)
+            # Guruhga e'lon
             try:
                 bot.send_message(GROUP_ID, f"🛍 {call.from_user.first_name} {item['emoji']} {item['name']} ({price}⭐)")
             except:
                 pass
 
-            # Admin xabari
+            # Admin xabari (tugma bilan)
+            profile_link = f"tg://user?id={uid}"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
+            admin_msg = f"🛍 {call.from_user.first_name} {item['name']} ({price}⭐)"
             try:
-                bot.send_message(ADMIN_ID, f"🛍 {call.from_user.first_name}\n🆔 <code>{uid}</code>\n🎁 {item['name']}\n💰 {price}⭐\n📞 <a href='tg://user?id={uid}'>BOG'LANISH</a>")
-            except:
-                pass
+                bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup)
+                logger.info(f"Admin xabar yuborildi: {admin_msg}")
+            except Exception as e:
+                logger.error(f"Admin xabar yuborilmadi: {e}")
 
     bot.answer_callback_query(call.id)
 
@@ -818,7 +803,7 @@ def tasks_cmd(m):
 def help_cmd(m):
     bot.reply_to(m, f"🤖 {BOT_USERNAME}\n/start /stats /daily /link /tasks /help\n\n👥 2 ta = 1⭐\n🎁 +{DAILY_BONUS}⭐/kun\n📢 {GROUP_LINK}")
 
-# ================= LEADERBOARD (faqat ichki, kanalga yubormaydi) =================
+# ================= BACKGROUND TASKS =================
 last_top_hash = ""
 
 def get_top_hash():
@@ -846,14 +831,11 @@ def leaderboard_scheduler():
                         vip_mark = "👑" if v else ""
                         text += f"{medal} <b>{user}</b> {vip_mark}\n👥{inv} ⭐{format_stars(st)} 🔥{streak}\n\n"
                     text += f"\n🔥 2 ta = 1⭐ | 🔗 @{BOT_USERNAME}"
-                    # KANALGA YUBORISH O'CHIRILDI
-                    # Faqat konsolga chiqarish mumkin
-                    logger.info("Leaderboard updated, not sent to channels.")
+                    logger.info("Leaderboard updated (not sent to channels).")
         except Exception as e:
             logger.error(f"Leaderboard: {e}")
         time.sleep(60)
 
-# ================= AVTOMATIK REKLAMA (faqat foydalanuvchilarga) =================
 def auto_ad_sender():
     while True:
         try:
@@ -872,6 +854,28 @@ def auto_ad_sender():
         except:
             pass
         time.sleep(172800)
+
+# ================= HTTP SERVER FOR RENDER =================
+PORT = int(os.environ.get("PORT", 10000))
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+    def log_message(self, format, *args):
+        pass
+
+def start_http_server():
+    while True:
+        try:
+            server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+            print(f"✅ HTTP server listening on port {PORT}")
+            server.serve_forever()
+        except Exception as e:
+            print(f"⚠️ HTTP server error: {e}, retrying in 10s...")
+            time.sleep(10)
 
 # ================= MAIN =================
 if __name__ == "__main__":
@@ -892,6 +896,8 @@ if __name__ == "__main__":
 
     Thread(target=leaderboard_scheduler, daemon=True).start()
     Thread(target=auto_ad_sender, daemon=True).start()
+    Thread(target=start_http_server, daemon=True).start()
+    time.sleep(2)
 
     while True:
         try:
