@@ -30,6 +30,14 @@ GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
+# ================= REKLAMA UCHUN =================
+GIFT_ADS = [
+    {"emoji": "❤️", "name": "Pushti Yurakcha", "desc": "Sevgi ramzi!", "photo": "https://i.imgur.com/8Yp9Z2M.jpg"},
+    {"emoji": "🧸", "name": "Ayiqcha", "desc": "Yoqimli sovg'a!", "photo": "https://i.imgur.com/5f2vL8K.jpg"},
+    {"emoji": "🌹", "name": "Atirgul", "desc": "Romantik!", "photo": "https://i.imgur.com/7zK9pQm.jpg"},
+    {"emoji": "🎁", "name": "Sovg'a qutisi", "desc": "Sirli sovg'a!", "photo": "https://i.imgur.com/3vX9pLm.jpg"},
+]
+
 # ================= BOT INIT =================
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,7 +45,7 @@ logger = logging.getLogger("BOT")
 
 # ================= DATABASE =================
 lock = Lock()
-pending_external_checks = {}  # {user_id: {"type": "forced", "db_id": x, "chat_id": y, "message_id": z, "timer": Timer}}
+pending_external_checks = {}  # {user_id: {"type": "forced", "db_id": x, "timer": Timer}}
 
 class DB:
     def __init__(self):
@@ -236,6 +244,24 @@ class DB:
     def grant_vip(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
+            self.conn.commit()
+
+    def can_send_ad(self, uid, hours=48):
+        with lock:
+            self.cur.execute("SELECT last_ad FROM users WHERE user_id=?", (uid,))
+            row = self.cur.fetchone()
+            if row and row[0]:
+                try:
+                    last = datetime.fromisoformat(row[0])
+                    if datetime.now() < last + timedelta(hours=hours):
+                        return False
+                except:
+                    pass
+            return True
+
+    def update_last_ad(self, uid):
+        with lock:
+            self.cur.execute("UPDATE users SET last_ad=? WHERE user_id=?", (datetime.now().isoformat(), uid))
             self.conn.commit()
 
     # ---------- Boshqa ----------
@@ -529,26 +555,17 @@ def callback(call):
         # Majburiy obuna - tashqi link (10 soniya orqa fonda kutish)
         if data.startswith("forcesub_wait_"):
             db_id = int(data.split("_")[2])
-            # Foydalanuvchiga xabar: kutish boshlanganini bildirish
             bot.answer_callback_query(call.id, "⏳ 10 soniya tekshiriladi, iltimos kuting...", show_alert=False)
             msg = bot.send_message(call.message.chat.id, "⏳ Obunangiz tekshirilmoqda. Iltimos, 10 soniya kuting...\n\n✅ Agar obuna bo'lgan bo'lsangiz, avtomatik tasdiqlanadi.")
             
-            # Orqa fonda 10 soniyadan keyin tekshiruvchi funksiyani ishga tushirish
             def verify_external_forced():
                 try:
-                    # Obuna bajarilganmi? (hech qanday tasdiqlash tugmasi yo'q)
                     channels = db.get_forced_channels()
                     target = next((c for c in channels if c[0] == db_id), None)
                     if target and target[1] != 'telegram':
-                        # Tashqi linklar uchun biz hech qanday haqiqiy tekshiruv qila olmaymiz,
-                        # shuning uchun 10 soniyadan keyin avtomatik tasdiqlaymiz.
-                        # Agar foydalanuvchi yolg'on gapirgan bo'lsa, bu uning muammosi.
-                        # Siz xohlasangiz, bu erda API orqali tekshirish qo'shishingiz mumkin.
                         db.complete_forced(uid, db_id)
                         bot.send_message(call.message.chat.id, f"✅ {target[4]} uchun obuna tasdiqlandi! Endi botdan to‘liq foydalanishingiz mumkin.")
-                        # Referalni qayta ishlash
                         process_referral_after_forced(uid)
-                        # Startni yangilash
                         start(call.message)
                     else:
                         bot.send_message(call.message.chat.id, "❌ Xatolik: kanal topilmadi.")
@@ -561,7 +578,7 @@ def callback(call):
             timer = Timer(10.0, verify_external_forced)
             timer.daemon = True
             timer.start()
-            pending_external_checks[uid] = {"type": "forced", "timer": timer, "chat_id": call.message.chat.id, "message_id": msg.message_id}
+            pending_external_checks[uid] = {"type": "forced", "timer": timer}
             return
 
         # Kunlik bonus
@@ -691,7 +708,7 @@ def callback(call):
             timer = Timer(10.0, verify_task)
             timer.daemon = True
             timer.start()
-            pending_external_checks[uid] = {"type": "task", "timer": timer, "chat_id": call.message.chat.id, "message_id": msg.message_id}
+            pending_external_checks[uid] = {"type": "task", "timer": timer}
             return
 
         # Xarid qilish
@@ -717,14 +734,17 @@ def callback(call):
 ⏳ <b>Admin 24 soat ichida sovg'angizni yuboradi.</b>"""
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅ Sotib olindi!", show_alert=True)
-            # Admin xabari
+
+            # Admin xabari (tugma bilan)
             profile_link = f"tg://user?id={uid}"
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
+            admin_msg = f"🛍 {call.from_user.first_name} {item['name']} ({item['price']}⭐)"
             try:
-                bot.send_message(ADMIN_ID, f"🛍 {call.from_user.first_name} {item['name']} ({item['price']}⭐)", reply_markup=markup)
-            except:
-                pass
+                bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup)
+                logger.info(f"Admin xabar yuborildi: {admin_msg}")
+            except Exception as e:
+                logger.error(f"Admin xabar yuborilmadi: {e} (ADMIN_ID={ADMIN_ID})")
             return
 
         bot.answer_callback_query(call.id)
@@ -924,7 +944,7 @@ def set_limit(m):
     try:
         new_limit = int(m.text.split()[1])
         db.set_config("max_users", new_limit)
-        bot.reply_to(m, f"✅ Foydalanuvchi limiti {new_limit} ga o'zgartirildi. Agar hozirgi foydalanuvchilar soni {db.get_user_count()} bo'lsa, majburiy obuna {'o\'chadi' if db.get_user_count() >= new_limit else 'yoqilgan holda qoladi'}.")
+        bot.reply_to(m, f"✅ Foydalanuvchi limiti {new_limit} ga o'zgartirildi. Hozirgi foydalanuvchilar: {db.get_user_count()}")
     except:
         bot.reply_to(m, "❌ /set_limit [son]")
 
@@ -948,9 +968,7 @@ def forced_status(m):
 Konfiguratsiya: {"✅ YOQILGAN" if forced_mode_config else "❌ O'CHIRILGAN"}
 Foydalanuvchi limiti: {max_users}
 Jami foydalanuvchilar: {current_users}
-Majburiy rejim: {"✅ faol" if enabled else "❌ faol emas"}
-
-Agar {current_users} >= {max_users} bo'lsa, majburiy obuna avtomatik o'chadi."""
+Majburiy rejim: {"✅ faol" if enabled else "❌ faol emas"}"""
     bot.reply_to(m, text)
 
 @bot.message_handler(commands=["search"])
@@ -1080,7 +1098,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("🚀 STARS BOT ISHGA TUSHIRILDI")
     print(f"💰 Bonus: {DAILY_BONUS}⭐/kun")
-    print(f"👤 Admin: {ADMIN_USERNAME}")
+    print(f"👤 Admin: {ADMIN_USERNAME} (ID: {ADMIN_ID})")
     print("📊 Top: 1 daqiqa (kanalga yuborilmaydi)")
     print("✅ Referal obunadan keyin hisoblanadi")
     print("✅ Vazifalar paneli qo'shildi")
