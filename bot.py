@@ -1,4 +1,9 @@
-import os, time, random, logging, sqlite3, requests
+import os
+import time
+import random
+import logging
+import sqlite3
+import requests
 from threading import Lock, Thread
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -25,13 +30,14 @@ GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
-DB_PATH = "bot.db"  # doimiy saqlanadi
+# Doimiy ma'lumotlar bazasi (Render'da diskda saqlanadi)
+DB_PATH = "bot.db"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
 lock = Lock()
-pending_verifications = {}  # {user_id: {task_id: timestamp}}  for external tasks (10 sec wait)
+pending_verifications = {}  # {user_id: {"type": "forced"/"task", "id": xxx, "timestamp": datetime}}
 
 # ================= MA'LUMOTLAR BAZASI =================
 class DB:
@@ -159,10 +165,8 @@ class DB:
 
     def add_successful_invite(self, uid):
         with lock:
-            # Invite hisobini oshirish va 0.5⭐ qo'shish
             self.cur.execute("UPDATE users SET successful_invites = successful_invites + 1, stars = stars + 0.5, total_earned = total_earned + 0.5 WHERE user_id=?", (uid,))
             self.conn.commit()
-            # Yangi qiymatlarni olish
             self.cur.execute("SELECT successful_invites, stars FROM users WHERE user_id=?", (uid,))
             return self.cur.fetchone()
 
@@ -372,10 +376,8 @@ def process_referral_after_forced(uid):
         return False
     inviter_id = db.get_pending_inviter(uid)
     if inviter_id and not db.check_duplicate_invite(inviter_id, uid):
-        # Taklif qiluvchini tekshirish, u bloklanmagan bo'lishi kerak
         if not db.check_ban(inviter_id):
             db.create_user(inviter_id, None, "User")
-            # Invited nomini olish
             try:
                 user = bot.get_chat(uid)
                 name = user.first_name
@@ -462,7 +464,7 @@ def callback(call):
     data = call.data
 
     try:
-        # Majburiy obuna uchun tekshiruv
+        # ========= MAJBURIY OBUNA (telegram kanal) =========
         if data.startswith("forcesub_check_"):
             db_id = int(data.split("_")[2])
             channels = db.get_forced_channels()
@@ -473,7 +475,6 @@ def callback(call):
                     if member.status in ['member','administrator','creator']:
                         db.complete_forced(uid, db_id)
                         bot.answer_callback_query(call.id, "✅ Qabul qilindi!", show_alert=False)
-                        # Yangilangan start
                         start(call.message)
                     else:
                         bot.answer_callback_query(call.id, "❌ Hali obuna bo'lmagansiz!", show_alert=True)
@@ -481,9 +482,9 @@ def callback(call):
                     bot.answer_callback_query(call.id, "❌ Tekshirib bo'lmadi!", show_alert=True)
             return
 
+        # ========= MAJBURIY OBUNA (tashqi link: 10 soniya kutish) =========
         if data.startswith("forcesub_wait_"):
             db_id = int(data.split("_")[2])
-            # 10 sekund kutish mexanizmi
             pending_verifications[uid] = {"type": "forced", "db_id": db_id, "timestamp": datetime.now()}
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"forcesub_confirm_{db_id}"))
@@ -506,7 +507,7 @@ def callback(call):
                 bot.answer_callback_query(call.id, "❌ Avval «Obuna bo‘ldim» tugmasini bosing.", show_alert=True)
             return
 
-        # Kunlik bonus
+        # ========= KUNLIK BONUS =========
         if data == "daily":
             ok, ns, bonus, streak, extra = db.give_daily_bonus(uid)
             if ok:
@@ -517,7 +518,7 @@ def callback(call):
                 bot.answer_callback_query(call.id, "❌ Bugun olgansiz!", show_alert=True)
             return
 
-        # Do'kon
+        # ========= DO'KON =========
         if data == "shop":
             u = db.get(uid)
             markup = types.InlineKeyboardMarkup(row_width=2)
@@ -527,7 +528,7 @@ def callback(call):
             bot.send_message(call.message.chat.id, add_footer(f"🛒 Balans: {format_stars(u['stars'])}⭐"), reply_markup=markup)
             return
 
-        # Top
+        # ========= TOP =========
         if data == "top":
             top = db.get_top(10)
             if top:
@@ -542,7 +543,7 @@ def callback(call):
                 bot.send_message(call.message.chat.id, "Hali hech qanday taklif yo'q")
             return
 
-        # Profil
+        # ========= PROFIL =========
         if data == "profile":
             u = db.get(uid)
             vip = "✅" if u['vip'] else "❌"
@@ -555,13 +556,13 @@ def callback(call):
             bot.send_message(call.message.chat.id, add_footer(text))
             return
 
-        # Havola
+        # ========= HAVOLA =========
         if data == "link":
             link = get_invite_link(uid)
             bot.send_message(call.message.chat.id, add_footer(f"🔗 <code>{link}</code>\n\n📢 Guruh: {GROUP_LINK}"))
             return
 
-        # Vazifalar menyusi
+        # ========= VAZIFALAR MENYUSI =========
         if data == "tasks":
             tasks = db.get_tasks()
             completed = db.get_user_completed_tasks(uid)
@@ -582,7 +583,7 @@ def callback(call):
             bot.send_message(call.message.chat.id, "📋 <b>VAZIFALAR</b>\n\nHar bir vazifani bajarib yulduz oling.", reply_markup=markup)
             return
 
-        # Vazifalarni tekshirish (telegram kanali)
+        # ========= VAZIFALAR (telegram kanali uchun tekshirish) =========
         if data.startswith("task_check_"):
             tid = int(data.split("_")[2])
             tasks = db.get_tasks()
@@ -606,7 +607,7 @@ def callback(call):
                     bot.answer_callback_query(call.id, "❌ Kanalni tekshirib bo'lmadi", show_alert=True)
             return
 
-        # Vazifalar uchun 10 sekund kutish (tashqi linklar)
+        # ========= VAZIFALAR (tashqi link: 10 soniya kutish) =========
         if data.startswith("task_wait_"):
             tid = int(data.split("_")[2])
             pending_verifications[uid] = {"type": "task", "task_id": tid, "timestamp": datetime.now()}
@@ -635,7 +636,7 @@ def callback(call):
                 bot.answer_callback_query(call.id, "❌ Avval «Bajarildi» tugmasini bosing.", show_alert=True)
             return
 
-        # Xarid qilish
+        # ========= XARID =========
         if data.startswith("buy_"):
             item_id = int(data.split("_")[1])
             item = SHOP.get(item_id)
@@ -691,7 +692,7 @@ def admin_cmd(m):
 /ban [id] /unban [id]
 /broadcast [matn]
 /addforced [tur] [chat_id] [@] [nomi] [url]
-/addtask [tur] [chat_id] [@] [nomi] [url]
+/addtask [tur] [chat_id] [@] [nomi] [url] [reward]
 /removeforced [id] /removetask [id]
 /listforced /listtasks
 /search [id/username]
@@ -908,7 +909,7 @@ def tasks_cmd(m):
 def help_cmd(m):
     bot.reply_to(m, f"🤖 {BOT_USERNAME}\n\n/start - Botni ishga tushirish\n/stats - Mening statistikam\n/daily - Kunlik bonus olish\n/link - Taklif havolam\n/tasks - Vazifalar ro'yxati\n/help - Yordam\n\n👥 2 ta taklif = 1⭐\n🎁 Kunlik bonus: {DAILY_BONUS}⭐\n📢 Guruh: {GROUP_LINK}")
 
-# ================= HTTP SERVER (Render uchun) =================
+# ================= HTTP SERVER (Render port binding uchun) =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -919,13 +920,20 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def run_http_server():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"🌐 HTTP server {port} portda ishga tushdi")
-    server.serve_forever()
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        print(f"✅ HTTP server {port} portda ishga tushdi")
+        server.serve_forever()
+    except Exception as e:
+        print(f"❌ HTTP server xatosi: {e}")
+        logger.error(f"HTTP server xatosi: {e}", exc_info=True)
+        # Agar port band bo'lsa, 30 sekunddan keyin qayta urinish
+        time.sleep(30)
+        run_http_server()
 
-# ================= ISHGA TUSHIRISH =================
+# ================= ASOSIY ISHGA TUSHIRISH =================
 if __name__ == "__main__":
-    print("🚀 Bot ishga tushirilmoqda...")
+    print("🚀 Bot ishga tushirilmoqda (Render Web Service)...")
     try:
         resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/getMe", timeout=10)
         if resp.status_code != 200 or not resp.json().get("ok"):
@@ -941,11 +949,17 @@ if __name__ == "__main__":
             break
         except: time.sleep(2)
 
-    # HTTP server thread
-    Thread(target=run_http_server, daemon=True).start()
-    time.sleep(2)
+    # HTTP serverni alohida threadda ishga tushirish (Render port talabi)
+    http_thread = Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    time.sleep(3)  # Serverning boshlanishi uchun vaqt
 
-    # Botni polling bilan ishga tushirish
+    if not http_thread.is_alive():
+        print("⚠️ HTTP server ishga tushmadi! Render portni aniqlay olmasligi mumkin.")
+    else:
+        print("✅ HTTP server muvaffaqiyatli ishga tushdi.")
+
+    # Botni polling bilan ishga tushirish (bu bloklanadi)
     while True:
         try:
             bot.infinity_polling(timeout=60, skip_pending=True)
