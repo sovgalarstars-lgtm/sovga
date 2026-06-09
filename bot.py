@@ -25,8 +25,8 @@ if BOT_USERNAME.startswith("@"):
     BOT_USERNAME = BOT_USERNAME[1:]
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@Stars_5_odam_1stars")
-GROUP_ID = -1002449896845
-GROUP_LINK = "https://t.me/Stars_2_odam_1stars"
+GROUP_ID = -1003735269480  # Guruh ID - o‘zingizga moslab o‘zgartiring
+GROUP_LINK = "https://t.me/StarsStarsuzb"
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
@@ -45,7 +45,7 @@ logger = logging.getLogger("BOT")
 
 # ================= DATABASE =================
 lock = Lock()
-pending_external_checks = {}  # {user_id: {"type": "forced", "db_id": x, "timer": Timer}}
+pending_external_checks = {}  # {user_id: {"type": "forced", "timer": Timer}}
 
 class DB:
     def __init__(self):
@@ -143,7 +143,6 @@ class DB:
             self.cur.execute("REPLACE INTO bot_config(key, value) VALUES(?,?)", (key, str(value)))
             self.conn.commit()
 
-    # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
         with lock:
             self.cur.execute("INSERT OR IGNORE INTO users(user_id, username, first_name) VALUES(?,?,?)", (uid, username, name))
@@ -162,7 +161,6 @@ class DB:
             self.cur.execute("SELECT COUNT(*) FROM users")
             return self.cur.fetchone()[0]
 
-    # ---------- Referal ----------
     def add_invite(self, uid):
         with lock:
             self.cur.execute("UPDATE users SET invites = invites + 1 WHERE user_id=?", (uid,))
@@ -199,7 +197,6 @@ class DB:
             self.cur.execute("DELETE FROM pending_invites WHERE invited_id=?", (invited_id,))
             self.conn.commit()
 
-    # ---------- Yulduzlar ----------
     def sub_star(self, uid, amount):
         with lock:
             self.cur.execute("SELECT stars FROM users WHERE user_id=?", (uid,))
@@ -241,11 +238,6 @@ class DB:
             self.conn.commit()
             return True, ns, bonus, streak, extra
 
-    def grant_vip(self, uid):
-        with lock:
-            self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
-            self.conn.commit()
-
     def can_send_ad(self, uid, hours=48):
         with lock:
             self.cur.execute("SELECT last_ad FROM users WHERE user_id=?", (uid,))
@@ -264,7 +256,11 @@ class DB:
             self.cur.execute("UPDATE users SET last_ad=? WHERE user_id=?", (datetime.now().isoformat(), uid))
             self.conn.commit()
 
-    # ---------- Boshqa ----------
+    def grant_vip(self, uid):
+        with lock:
+            self.cur.execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
+            self.conn.commit()
+
     def get_top(self, limit=10):
         with lock:
             self.cur.execute("SELECT username, first_name, invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY invites DESC LIMIT ?", (limit,))
@@ -324,7 +320,6 @@ class DB:
             self.cur.execute("SELECT user_id FROM users WHERE is_banned=0")
             return [row[0] for row in self.cur.fetchall()]
 
-    # ---------- Majburiy kanallar ----------
     def get_forced_channels(self):
         with lock:
             self.cur.execute("SELECT id, channel_type, channel_id, channel_username, channel_name, channel_url FROM forced_channels")
@@ -356,7 +351,6 @@ class DB:
             self.cur.execute("SELECT channel_id FROM user_forced WHERE user_id=?", (uid,))
             return [r[0] for r in self.cur.fetchall()]
 
-    # ---------- Vazifalar ----------
     def get_tasks(self):
         with lock:
             self.cur.execute("SELECT id, task_type, channel_id, channel_username, channel_name, channel_url, reward FROM tasks")
@@ -735,16 +729,30 @@ def callback(call):
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅ Sotib olindi!", show_alert=True)
 
-            # Admin xabari (tugma bilan)
-            profile_link = f"tg://user?id={uid}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("📞 Yozish", url=profile_link))
-            admin_msg = f"🛍 {call.from_user.first_name} {item['name']} ({item['price']}⭐)"
+            # Admin xabari – username orqali profilga o'tish tugmasi
+            user = call.from_user
+            username = user.username
+            first_name = user.first_name
+            admin_msg = f"🛍 <b>{first_name}</b> sovg'a oldi:\n🎁 {item['name']} ({item['price']}⭐)\n🆔 ID: <code>{uid}</code>"
+            
+            markup = None
+            if username:
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("👤 Profilga o'tish", url=f"https://t.me/{username}"))
+            
             try:
-                bot.send_message(ADMIN_ID, admin_msg, reply_markup=markup)
+                bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML", reply_markup=markup)
                 logger.info(f"Admin xabar yuborildi: {admin_msg}")
             except Exception as e:
-                logger.error(f"Admin xabar yuborilmadi: {e} (ADMIN_ID={ADMIN_ID})")
+                logger.error(f"Admin xabar yuborilmadi: {e}")
+                # Agar xatolik bo'lsa, tugmasiz yuborish
+                bot.send_message(ADMIN_ID, admin_msg, parse_mode="HTML")
+
+            # Guruhga e'lon
+            try:
+                bot.send_message(GROUP_ID, f"🛍 {first_name} {item['emoji']} {item['name']} ({item['price']}⭐)")
+            except:
+                pass
             return
 
         bot.answer_callback_query(call.id)
@@ -1014,6 +1022,17 @@ def link_cmd(m):
 @bot.message_handler(commands=["tasks"])
 def tasks_cmd(m):
     show_tasks_menu(m.chat.id, m.from_user.id)
+
+@bot.message_handler(commands=["send"])
+def send_cmd(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        parts = m.text.split(maxsplit=2)
+        uid, text = int(parts[1]), parts[2]
+        bot.send_message(uid, f"📩 <b>Admin xabari:</b>\n\n{text}")
+        bot.reply_to(m, f"✅ {uid} ga yuborildi!")
+    except:
+        bot.reply_to(m, "❌ /send [id] [matn]")
 
 @bot.message_handler(commands=["help"])
 def help_cmd(m):
