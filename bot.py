@@ -22,7 +22,10 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@Stars_5_odam_1stars")
 DAILY_BONUS = 0.20
 TASK_REWARD = 0.20
 
-# Ma'lumotlar bazasi turi
+# Kanal username (avtomatik top yuborish uchun)
+CHANNEL_USERNAME = "@StarsStarsuzb"
+
+# PostgreSQL URL (ixtiyoriy)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,7 +36,6 @@ lock = threading.Lock()
 # ================= DATABASE =================
 class DB:
     def __init__(self):
-        # Avval SQLite ishlatamiz, agar DATABASE_URL bo‘lsa PostgreSQL
         if DATABASE_URL:
             try:
                 import psycopg2
@@ -142,9 +144,6 @@ class DB:
             price REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
-        if self.db_type == "sqlite":
-            # SQLite da SERIAL ishlamaydi, lekin integer primary key avtomatik
-            pass
 
     # ---------- Foydalanuvchi ----------
     def create_user(self, uid, username, name):
@@ -274,7 +273,7 @@ class DB:
     def grant_vip(self, uid):
         self._execute("UPDATE users SET vip=1 WHERE user_id=?", (uid,))
 
-    def get_top(self, limit=10):
+    def get_top(self, limit=20):
         return self._execute(
             "SELECT user_id, username, first_name, successful_invites, stars, vip, daily_streak FROM users WHERE is_banned=0 ORDER BY successful_invites DESC LIMIT ?",
             (limit,), fetch="all"
@@ -450,6 +449,31 @@ def finalize_referral(invited_id):
 # ================= BOT =================
 bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML", threaded=False)
 
+# ---------- Kanalga top yuborish funksiyasi ----------
+def send_top_to_channel(channel_id):
+    try:
+        top = db.get_top(20)
+        if top:
+            text = "🏆 <b>TOP 20 TAKLIFCHILAR</b>\n\n"
+            for i, (top_uid, un, nm, inv, st, v, streak) in enumerate(top, 1):
+                if un:
+                    user = f"@{un}"
+                elif nm:
+                    user = nm
+                else:
+                    user = f"ID:{top_uid}"
+                medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else f"{i}️⃣"
+                vip = "👑" if v else ""
+                text += f"{medal} {user} {vip} — {inv} ta taklif, {format_stars(st)}⭐\n"
+            text += f"\n🔥 2 ta taklif = 1⭐ | 🔗 @{BOT_USERNAME}"
+            bot.send_message(channel_id, text, parse_mode="HTML")
+            logger.info(f"Kanalga top yuborildi: {channel_id}")
+        else:
+            bot.send_message(channel_id, "Hali takliflar mavjud emas.")
+    except Exception as e:
+        logger.error(f"Top yuborishda xatolik: {e}")
+
+# ================= HANDLERLAR =================
 @bot.message_handler(commands=["start"])
 def start(m):
     uid = m.from_user.id
@@ -557,9 +581,9 @@ def callback(call):
             bot.send_message(call.message.chat.id, add_footer(f"🛒 Balans: {format_stars(u['stars'])}⭐"), reply_markup=markup)
 
         elif data == "top":
-            top = db.get_top(10)
+            top = db.get_top(20)
             if top:
-                text = "🏆 TOP 10:\n"
+                text = "🏆 TOP 20:\n"
                 for i, (top_uid, un, nm, inv, st, v, streak) in enumerate(top, 1):
                     if un: user = f"@{un}"
                     elif nm: user = nm
@@ -648,6 +672,7 @@ def callback(call):
             bot.send_photo(call.message.chat.id, item['photo'], caption=caption)
             bot.answer_callback_query(call.id, "✅", show_alert=True)
 
+            # Admin uchun xabar
             try:
                 user_info = bot.get_chat(uid)
                 if user_info.username:
@@ -855,6 +880,8 @@ def run_http_server():
 # ================= ISHGA TUSHIRISH =================
 if __name__ == "__main__":
     print("🚀 Bot ishga tushirilmoqda (Web Service)...")
+
+    # Token tekshirish
     try:
         resp = requests.get(f"https://api.telegram.org/bot{API_TOKEN}/getMe", timeout=10)
         if resp.status_code != 200 or not resp.json().get("ok"):
@@ -862,13 +889,37 @@ if __name__ == "__main__":
         print(f"✅ Token to'g'ri: @{resp.json()['result']['username']}")
     except Exception as e:
         print(f"❌ Token tekshirib bo'lmadi: {e}"); exit(1)
+
+    # Webhookni o'chirish
     for _ in range(3):
         try:
             requests.get(f"https://api.telegram.org/bot{API_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
             break
         except: time.sleep(2)
+
+    # Kanal ID olish
+    try:
+        ch = bot.get_chat(CHANNEL_USERNAME)
+        channel_id = ch.id
+        print(f"✅ Kanal topildi: {CHANNEL_USERNAME} (ID: {channel_id})")
+        # Har 30 daqiqada top yuborish thread'ini boshlash
+        def top_scheduler():
+            while True:
+                time.sleep(1800)  # 30 daqiqa
+                try:
+                    send_top_to_channel(channel_id)
+                except Exception as e:
+                    logger.error(f"Top scheduler xatosi: {e}")
+        threading.Thread(target=top_scheduler, daemon=True).start()
+    except Exception as e:
+        print(f"❌ Kanal topilmadi yoki xato: {e}. Top yuborish o'chirilgan.")
+        logger.error(f"Kanal xatosi: {e}")
+
+    # HTTP serverni ishga tushirish
     threading.Thread(target=run_http_server, daemon=True).start()
     time.sleep(2)
+
+    # Bot polling
     while True:
         try:
             bot.infinity_polling(timeout=60, skip_pending=True)
